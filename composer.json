@@ -3,6 +3,13 @@
     "description": "Official PHP SDK for Latch Vector SSO — token verification and authentication.",
     "type": "library",
     "license": "MIT",
+    "authors": [
+        {
+            "name": "LatchVector",
+            "email": "support@latchvector.com",
+            "homepage": "https://latchvector.com"
+        }
+    ],
     "require": {
         "php": ">=8.1",
         "ext-json": "*",
