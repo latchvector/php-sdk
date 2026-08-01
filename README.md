@@ -14,6 +14,20 @@ composer require latchvector/sso
 
 ---
 
+## Contents
+
+- [Protecting an API — the common case](#protecting-an-api--the-common-case)
+- [Multitenancy (Laravel)](#multitenancy-laravel)
+- [What `audience` is for](#what-audience-is-for)
+- [The principal](#the-principal)
+- [Logging users in](#logging-users-in)
+- [Errors](#errors)
+- [Configuration](#configuration)
+- [Smoke test](#smoke-test)
+- [Before you go live](#before-you-go-live)
+- [Webhooks](#webhooks)
+- [Migrating from your current system](#migrating-from-your-current-system)
+
 ## Protecting an API — the common case
 
 Most integrations only need this. Your API verifies tokens locally; it does
@@ -509,106 +523,22 @@ checks whose absence turns a working integration into an open door.
 - [ ] `RefreshTokenReusedException` is handled as a compromise, not retried
 - [ ] The `MfaRequired` branch is implemented and tested
 - [ ] Tokens are never written to logs, URLs, or error reports
+
 ## Webhooks
 
-The SSO service can POST **critical events** to your application: a role
-assigned or revoked from a user, a role's permissions changed, an account
-disabled or erased. When permissions change, the affected users' current tokens
-are invalidated (`data.tokensInvalidated: true`) — they refresh into a token
-with the new access — so a webhook is your cue to clear caches or force a
-refresh instead of waiting for the first 401.
+Get notified the moment a user's access changes — a role assigned or revoked, a
+role's permissions changed, an account disabled or erased — so you can clear
+caches or force a refresh instead of waiting for the next failed call. Every
+delivery is HMAC-signed and timestamped, and this SDK ships a one-call verifier.
 
-You register and manage endpoints from the **control panel** (Applications →
-Manage → Webhook), or over the management API. A webhook is optional — an
-application with none behaves exactly as before, it just receives no events.
+**→ [Webhooks guide](docs/webhooks.md)** — events, payload, the signature scheme,
+and a verified handler example.
 
-```
-# Register — returns the signing secret ONCE, store it now
-POST /api/webhooks
-  { "organizationId": 1, "applicationId": 42,
-    "url": "https://app.example.com/hooks/latchvector", "eventTypes": [] }
-  -> { "id": 7, "url": "...", "secret": "whsec_...", "eventTypes": "" }
-
-# Change URL / events / pause — the secret is left untouched
-PUT  /api/webhooks/7   { "url": "...", "eventTypes": ["role.revoked"], "active": true }
-
-# Rotate the secret (returned once); the old one stops working immediately
-POST /api/webhooks/7/rotate-secret   -> { "id": 7, "secret": "whsec_..." }
-
-DELETE /api/webhooks/7
-```
-
-Event types: `role.assigned`, `role.revoked`, `role.permissions_changed`,
-`user.disabled`, `user.enabled`, `user.erased`. An empty `eventTypes` means all.
-
-Payload:
-
-```json
-{
-  "id": "<uuid>", "type": "role.revoked",
-  "occurredAt": "2026-...Z", "tenantId": 1, "orgId": 57,
-  "data": { "userId": 4711, "roleId": 12, "roleName": "Manager", "tokensInvalidated": true }
-}
-```
-
-Every delivery is signed. Verify the signature **and** the timestamp against the
-raw body (see the verify helper in this SDK) before trusting it:
-
-- `X-LatchVector-Signature: sha256=<hex HMAC-SHA256(timestamp + "." + rawBody, secret)>`
-- `X-LatchVector-Timestamp: <unix seconds>` — reject if too old (replay).
-- `X-LatchVector-Delivery: <event id>` — stable across retries, for idempotency.
-
-Delivery is at-least-once with exponential backoff; dedupe on the delivery id.
 ## Migrating from your current system
 
-Already have users, organizations, roles and permissions elsewhere? Don't create
-them one at a time. Describe the whole estate in one payload, **validate** it (a
-dry-run that reports every problem and writes nothing), then **commit** — a
-migration that took months takes an afternoon.
+Bring an existing estate — organizations, users, roles, permissions — across in
+one validated pass. Records reference each other by *your own ids*, bcrypt
+passwords carry over (everyone else is invited), and re-runs are safe.
 
-```
-POST /api/import/validate   ->  dry-run: reports every error, writes nothing
-POST /api/import/commit      ->  provisions it, in one transaction
-```
-
-Records reference each other by your **own ids** (`externalId`), so you never
-need ours:
-
-```jsonc
-{
-  // target: an existing org…            OR a brand-new tenant:
-  "rootParentOrgId": 57,                 // "rootTenant": { "orgName": "..", "slug": ".." }
-  "organizations": [
-    { "externalId": "o-cardio", "name": "Cardiology", "slug": "acme-cardio",
-      "parentExternalId": null }
-  ],
-  "roles": [
-    { "externalId": "r-doc", "orgExternalId": "o-cardio", "name": "Doctor",
-      "scope": "SUBTREE", "permissionCodes": ["USER_MANAGE"] }
-  ],
-  "users": [
-    { "externalId": "u-alice", "orgExternalId": "o-cardio", "email": "alice@acme.com",
-      "fullName": "Alice A", "passwordBcrypt": "$2b$10$.." }   // omit -> send an invite
-  ],
-  "assignments": [
-    { "userExternalId": "u-alice", "roleExternalId": "r-doc", "orgExternalId": "o-cardio" }
-  ]
-  // …also supported: applications[], permissions[]
-}
-```
-
-Both endpoints return the same report: `counts` per type, an `errors` list (each
-with the offending `externalId` and field) and, on commit, `invites` — the
-one-time set-password links for users with no carried-over password. **Commit
-writes nothing if `errors` is non-empty**, so a clean validate guarantees it.
-
-- **bcrypt** passwords carry over (`$2a/$2b/$2y$`) — users keep their login;
-  everyone else is invited.
-- **Idempotent** — re-running skips what already imported, so retries and staged
-  batches are safe.
-- **No code?** The control panel's **Import / Migrate** screen has a CSV template
-  per sheet and builds this same payload for you.
-
-Requires `ORG_MANAGE` + `USER_MANAGE` + `ROLE_MANAGE`; provisioning a brand-new
-tenant needs `PLATFORM_ADMIN`. The full contract and a complete worked example
-live in `sdk/MIGRATION.md` in the Latch Vector repository.
+**→ [Migration guide](docs/migration.md)** — the two-step validate/commit flow,
+the full payload schema, and a worked example.
