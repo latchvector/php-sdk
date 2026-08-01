@@ -509,3 +509,75 @@ checks whose absence turns a working integration into an open door.
 - [ ] `RefreshTokenReusedException` is handled as a compromise, not retried
 - [ ] The `MfaRequired` branch is implemented and tested
 - [ ] Tokens are never written to logs, URLs, or error reports
+## Webhooks
+
+The SSO service can POST **critical events** to your application: a role
+assigned or revoked from a user, a role's permissions changed, an account
+disabled or erased. When permissions change, the affected users' current tokens
+are invalidated (`data.tokensInvalidated: true`) — they refresh into a token
+with the new access — so a webhook is your cue to clear caches or force a
+refresh instead of waiting for the first 401.
+
+You register and manage endpoints from the **control panel** (Applications →
+Manage → Webhook), or over the management API. A webhook is optional — an
+application with none behaves exactly as before, it just receives no events.
+
+```
+# Register — returns the signing secret ONCE, store it now
+POST /api/webhooks
+  { "organizationId": 1, "applicationId": 42,
+    "url": "https://app.example.com/hooks/latchvector", "eventTypes": [] }
+  -> { "id": 7, "url": "...", "secret": "whsec_...", "eventTypes": "" }
+
+# Change URL / events / pause — the secret is left untouched
+PUT  /api/webhooks/7   { "url": "...", "eventTypes": ["role.revoked"], "active": true }
+
+# Rotate the secret (returned once); the old one stops working immediately
+POST /api/webhooks/7/rotate-secret   -> { "id": 7, "secret": "whsec_..." }
+
+DELETE /api/webhooks/7
+```
+
+Event types: `role.assigned`, `role.revoked`, `role.permissions_changed`,
+`user.disabled`, `user.enabled`, `user.erased`. An empty `eventTypes` means all.
+
+Payload:
+
+```json
+{
+  "id": "<uuid>", "type": "role.revoked",
+  "occurredAt": "2026-...Z", "tenantId": 1, "orgId": 57,
+  "data": { "userId": 4711, "roleId": 12, "roleName": "Manager", "tokensInvalidated": true }
+}
+```
+
+Every delivery is signed. Verify the signature **and** the timestamp against the
+raw body (see the verify helper in this SDK) before trusting it:
+
+- `X-LatchVector-Signature: sha256=<hex HMAC-SHA256(timestamp + "." + rawBody, secret)>`
+- `X-LatchVector-Timestamp: <unix seconds>` — reject if too old (replay).
+- `X-LatchVector-Delivery: <event id>` — stable across retries, for idempotency.
+
+Delivery is at-least-once with exponential backoff; dedupe on the delivery id.
+## Migrating from your current system
+
+Already have users, organizations, roles and permissions elsewhere? Don't create
+them one at a time. Describe the whole estate in one payload, **validate** it (a
+dry-run that reports every problem and writes nothing), then **commit** — a
+migration that took months takes an afternoon.
+
+```
+POST /api/import/validate   { organizations[], applications[], permissions[],
+POST /api/import/commit        roles[], users[], assignments[] }
+```
+
+- Records reference each other by your **own ids** (`externalId`) — you never
+  need ours.
+- **bcrypt** passwords carry over (users keep them); everyone else gets a
+  one-time set-password link, returned in the response.
+- **Idempotent**: re-running skips what already imported, so retries and batches
+  are safe.
+- Prefer spreadsheets? The control panel's **Import / Migrate** screen has a CSV
+  template per sheet and does the same thing with no code.
+
+Full contract, payload schema and a worked example: **[MIGRATION.md](../MIGRATION.md)**.
