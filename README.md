@@ -567,17 +567,48 @@ dry-run that reports every problem and writes nothing), then **commit** — a
 migration that took months takes an afternoon.
 
 ```
-POST /api/import/validate   { organizations[], applications[], permissions[],
-POST /api/import/commit        roles[], users[], assignments[] }
+POST /api/import/validate   ->  dry-run: reports every error, writes nothing
+POST /api/import/commit      ->  provisions it, in one transaction
 ```
 
-- Records reference each other by your **own ids** (`externalId`) — you never
-  need ours.
-- **bcrypt** passwords carry over (users keep them); everyone else gets a
-  one-time set-password link, returned in the response.
-- **Idempotent**: re-running skips what already imported, so retries and batches
-  are safe.
-- Prefer spreadsheets? The control panel's **Import / Migrate** screen has a CSV
-  template per sheet and does the same thing with no code.
+Records reference each other by your **own ids** (`externalId`), so you never
+need ours:
 
-Full contract, payload schema and a worked example: **[MIGRATION.md](../MIGRATION.md)**.
+```jsonc
+{
+  // target: an existing org…            OR a brand-new tenant:
+  "rootParentOrgId": 57,                 // "rootTenant": { "orgName": "..", "slug": ".." }
+  "organizations": [
+    { "externalId": "o-cardio", "name": "Cardiology", "slug": "acme-cardio",
+      "parentExternalId": null }
+  ],
+  "roles": [
+    { "externalId": "r-doc", "orgExternalId": "o-cardio", "name": "Doctor",
+      "scope": "SUBTREE", "permissionCodes": ["USER_MANAGE"] }
+  ],
+  "users": [
+    { "externalId": "u-alice", "orgExternalId": "o-cardio", "email": "alice@acme.com",
+      "fullName": "Alice A", "passwordBcrypt": "$2b$10$.." }   // omit -> send an invite
+  ],
+  "assignments": [
+    { "userExternalId": "u-alice", "roleExternalId": "r-doc", "orgExternalId": "o-cardio" }
+  ]
+  // …also supported: applications[], permissions[]
+}
+```
+
+Both endpoints return the same report: `counts` per type, an `errors` list (each
+with the offending `externalId` and field) and, on commit, `invites` — the
+one-time set-password links for users with no carried-over password. **Commit
+writes nothing if `errors` is non-empty**, so a clean validate guarantees it.
+
+- **bcrypt** passwords carry over (`$2a/$2b/$2y$`) — users keep their login;
+  everyone else is invited.
+- **Idempotent** — re-running skips what already imported, so retries and staged
+  batches are safe.
+- **No code?** The control panel's **Import / Migrate** screen has a CSV template
+  per sheet and builds this same payload for you.
+
+Requires `ORG_MANAGE` + `USER_MANAGE` + `ROLE_MANAGE`; provisioning a brand-new
+tenant needs `PLATFORM_ADMIN`. The full contract and a complete worked example
+live in `sdk/MIGRATION.md` in the Latch Vector repository.
