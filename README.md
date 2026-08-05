@@ -25,6 +25,9 @@ composer require latchvector/sso
 - [Configuration](#configuration)
 - [Smoke test](#smoke-test)
 - [Before you go live](#before-you-go-live)
+- [Password reset](#password-reset)
+- [Device sessions (mobile)](#device-sessions-mobile)
+- [Management API](#management-api)
 - [Webhooks](#webhooks)
 - [Migrating from your current system](#migrating-from-your-current-system)
 
@@ -523,6 +526,52 @@ checks whose absence turns a working integration into an open door.
 - [ ] `RefreshTokenReusedException` is handled as a compromise, not retried
 - [ ] The `MfaRequired` branch is implemented and tested
 - [ ] Tokens are never written to logs, URLs, or error reports
+
+## Password reset
+
+The invite / forgot-password flow (the token comes from the emailed link
+or an admin-issued setup link):
+
+```php
+$sso->forgotPassword($email);              // emails a one-time link (no account oracle)
+$sso->resetPassword($token, $newPassword); // redeem the link's token
+```
+
+## Device sessions (mobile)
+
+A mobile app gets a **longer-lived, device-bound** session by passing a
+`device` at login (also on `verifyMfa`/`socialLogin`). The service returns a
+stable **`deviceId`** — store it in secure storage and resend it so the same
+device is reused. The refresh token lives far longer than the web one and
+slides on every use; the user can list and revoke devices via
+`GET`/`DELETE /api/users/me/devices` (also on the ManagementClient).
+
+```php
+use LatchVector\Sso\DeviceInfo;
+// Presence of a device ⇒ a longer-lived, device-bound session.
+$r = $sso->login($email, $password, new DeviceInfo(name: "Ana's iPhone", platform: "ios"));
+saveToSecureStore($r->deviceId);   // store it; resend as new DeviceInfo(deviceId: …) next launch
+```
+
+## Management API
+
+Everything the console does, in code — users, organizations, roles, applications,
+API clients, webhooks, audit, bulk import, GDPR. Authenticated with a management
+token (log in with `audience` equal to the issuer):
+
+```php
+use LatchVector\Sso\SsoClient;
+use LatchVector\Sso\ManagementClient;
+
+$sso = new SsoClient($issuer, $issuer);              // management token
+$tokens = $sso->login($email, $password);
+$mgmt = new ManagementClient($issuer, $tokens->accessToken);
+$mgmt->createUser(['organizationId' => $orgId, 'email' => $email, 'fullName' => $name]);
+$mgmt->request('POST', '/api/anything', body: ['x' => 1]); // every endpoint, incl. new ones
+```
+
+**→ [Management API guide](docs/management.md)** — every resource, the token model,
+and the generic `request()` escape hatch.
 
 ## Webhooks
 

@@ -11,6 +11,8 @@ final class TokenPair implements LoginResult
         public readonly string $refreshToken,
         public readonly string $tokenType,
         public readonly int $expiresInSeconds,
+        /** Set only for a device session — the stable id to store and resend. */
+        public readonly ?string $deviceId = null,
     ) {
     }
 
@@ -22,6 +24,7 @@ final class TokenPair implements LoginResult
             refreshToken: (string) ($body['refreshToken'] ?? ''),
             tokenType: (string) ($body['tokenType'] ?? 'Bearer'),
             expiresInSeconds: (int) ($body['expiresInSeconds'] ?? 0),
+            deviceId: isset($body['deviceId']) ? (string) $body['deviceId'] : null,
         );
     }
 }
