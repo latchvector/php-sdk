@@ -53,12 +53,13 @@ final class SsoClient
         $this->http = $httpClient ?? new HttpClient(['timeout' => $timeoutSeconds]);
     }
 
-    public function login(string $email, string $password): LoginResult
+    public function login(string $email, string $password, ?DeviceInfo $device = null): LoginResult
     {
         return $this->toLoginResult($this->post('/api/auth/login', [
             'email' => $email,
             'password' => $password,
             'audience' => $this->wireAudience,
+            'device' => $device?->toArray(),
         ]));
     }
 
@@ -69,12 +70,13 @@ final class SsoClient
      * codes; both are accepted here, so a "use a recovery code instead"
      * link needs no separate endpoint.
      */
-    public function verifyMfa(string $pendingToken, string $code): TokenPair
+    public function verifyMfa(string $pendingToken, string $code, ?DeviceInfo $device = null): TokenPair
     {
         $result = $this->toLoginResult($this->post('/api/auth/mfa/verify', [
             'pendingToken' => $pendingToken,
             'code' => $code,
             'audience' => $this->wireAudience,
+            'device' => $device?->toArray(),
         ]));
 
         if (!$result instanceof TokenPair) {
@@ -91,7 +93,7 @@ final class SsoClient
      * administrator. A first-time social login for an unknown email is
      * refused rather than silently creating an account.
      */
-    public function socialLogin(string $provider, string $idToken): LoginResult
+    public function socialLogin(string $provider, string $idToken, ?DeviceInfo $device = null): LoginResult
     {
         if (!in_array($provider, ['google', 'microsoft'], true)) {
             throw new ConfigurationException("Unsupported social provider: {$provider}");
@@ -100,6 +102,7 @@ final class SsoClient
         return $this->toLoginResult($this->post("/api/auth/social/{$provider}", [
             'idToken' => $idToken,
             'audience' => $this->wireAudience,
+            'device' => $device?->toArray(),
         ]));
     }
 
@@ -129,6 +132,22 @@ final class SsoClient
     public function logout(string $refreshToken): void
     {
         $this->post('/api/auth/logout', ['refreshToken' => $refreshToken]);
+    }
+
+    /**
+     * Begin a password reset — the service emails a one-time link if the address
+     * has an account. Reveals nothing: it resolves the same whether or not the
+     * email exists, so it cannot be used to probe for accounts.
+     */
+    public function forgotPassword(string $email): void
+    {
+        $this->post('/api/auth/password/forgot', ['email' => $email]);
+    }
+
+    /** Set a new password from a one-time reset/invite token. */
+    public function resetPassword(string $token, string $newPassword): void
+    {
+        $this->post('/api/auth/password/reset', ['token' => $token, 'newPassword' => $newPassword]);
     }
 
     /**
