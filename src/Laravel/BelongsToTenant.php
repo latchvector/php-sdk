@@ -41,8 +41,21 @@ trait BelongsToTenant
         static::creating(function ($model): void {
             /** @var TenantContext $context */
             $context = app(TenantContext::class);
-            if (!$context->shouldScope()) {
+
+            // Scoping deliberately off (sandbox/dev) or a bypass caller: leave the
+            // row as-is (the caller is responsible for the tenant column).
+            if (!$context->isActive()) {
                 return;
+            }
+
+            // Fail closed on writes too: refuse to insert a tenant-owned row when
+            // scoping is on but no tenant is known — inserting it unscoped (or
+            // with a NULL tenant) is exactly the accidental leak we must prevent.
+            if ($context->tenantId() === null) {
+                throw new \RuntimeException(
+                    'Cannot persist ' . get_class($model) . ': tenant scoping is active but no tenant '
+                    . 'is set. Authenticate first, or disable scoping deliberately for this operation.',
+                );
             }
 
             $tenantColumn = $model->getTenantColumn();

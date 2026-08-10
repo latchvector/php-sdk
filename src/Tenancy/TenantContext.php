@@ -101,10 +101,27 @@ final class TenantContext
         return $this->enabled;
     }
 
-    /** Whether queries should be constrained to a tenant right now. */
+    /**
+     * Whether tenant scoping is in force right now — i.e. NOT explicitly turned
+     * off ({@see configure}) and NOT a bypass caller. Note this is true even
+     * when {@see tenantId} is still null: "scoping is on but we don't yet know
+     * the tenant" is the fail-closed case (a tenant-aware read returns nothing,
+     * a write throws), never a free-for-all.
+     */
+    public function isActive(): bool
+    {
+        return $this->enabled && !$this->bypass;
+    }
+
+    /**
+     * Whether queries should be constrained to a specific tenant right now:
+     * scoping is active AND we know which tenant. When this is false but
+     * {@see isActive} is true, the caller is unidentified and must be denied,
+     * not shown everything.
+     */
     public function shouldScope(): bool
     {
-        return $this->enabled && !$this->bypass && $this->tenantId !== null;
+        return $this->isActive() && $this->tenantId !== null;
     }
 
     /**
