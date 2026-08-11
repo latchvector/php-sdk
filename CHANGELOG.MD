@@ -4,11 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-08-11
+
 ### Added
-- Symfony + Doctrine tenant boundary: a `TenantFilter` (Doctrine SQL filter) and `TenantStampListener` (prePersist) that confine every query on a `TenantAware` entity to the caller's tenant and stamp new rows, wired automatically by the new `LatchVectorSsoBundle`. Mark an entity with `implements TenantAware; use BelongsToTenant;` (or `OrgSubtreeAware` + `BelongsToOrgSubtree` for org-subtree scoping). See `docs/symfony-tenancy.md`.
+- Symfony + Doctrine tenant boundary: a `TenantFilter` (Doctrine SQL filter) and `TenantStampListener` (prePersist) that confine every query on a `TenantAware` entity to the caller's tenant and stamp new rows, wired automatically by the new `LatchVectorSsoBundle`. See `docs/symfony-tenancy.md`.
+- `BelongsToTenantTree` — one-line trait that maps all three columns (`tenant_id`, `org_id`, `org_path`) and gives an entity org-tree isolation. `TenantWide` marker interface to opt a table into deliberate whole-tenant visibility. A tenant entity that declares neither isolation mode is now rejected loudly (never a silent whole-tenant leak).
+- `TenantContext::fromPrincipal()` — adopt a verified token's tenant and org reach in one call. The delegation hook for a machine-fronted backend that acts on behalf of a forwarded user token, so scoping follows the user, not the (tenant-wide) machine.
+- Filter within your subtree by a chosen org: Laravel `Model::forOrg('/2/5/', $includeSubtree)` / `forOrgId($id)` scopes and Doctrine `OrgScope::apply()` / `OrgScope::byId()`. Backed by `TenantContext::reaches()` / `reachesSubtree()` / `assertReach()`; a target outside the token's reach throws `OrgReachException` (map to HTTP 403). Narrowing only — it can never widen the always-on tenant scope.
+- Framework integration guides: `docs/integrate-laravel.md`, `docs/integrate-symfony.md`, `docs/integrate-raw-php.md`.
 
 ### Changed
 - Tenant scoping is now **fail closed** on both Symfony and Laravel: when scoping is active but no tenant is known, reads return nothing and writes throw — instead of the previous behaviour of returning every tenant's rows. `TenantContext` gains `isActive()` to distinguish "scoping on but tenant unknown" (deny) from a deliberate opt-out/bypass (unconstrained).
+- **BREAKING (data layer):** the default scope for a tenant-owned model is now the caller's **org subtree**, not the whole tenant — sibling orgs no longer see each other's rows out of the box. A model that should stay visible to the entire tenant must opt out explicitly: Laravel `protected string $tenantScope = 'tenant';`, Doctrine `implements TenantWide`. Subtree models need an `org_path` column.
 
 ## [1.0.2] - 2026-08-05
 

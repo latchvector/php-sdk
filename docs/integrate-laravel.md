@@ -90,7 +90,32 @@ $user = app(TokenVerifier::class)->verify($forwardedUserToken);
 app(TenantContext::class)->fromPrincipal($user);   // now models scope to the user's subtree
 ```
 
-## 5. Test it, step by step
+## 5. Filter within your subtree by a chosen org
+
+To let a caller narrow to one org inside their reach (e.g. I'm `/2/`, show me
+only `/2/5/`):
+
+```php
+Post::forOrg('/2/5/')->get();        // exactly that node (SELF)
+Post::forOrg('/2/5/', true)->get();  // that node and everything below (SUBTREE)
+Post::forOrgId(5)->get();            // a single node by org id
+```
+
+This only ever **narrows** the always-on tenant scope. An org outside the
+token's reach throws `OrgReachException` (raised as Laravel's
+`AuthorizationException` → HTTP 403 when available); `includeSubtree = true`
+additionally requires a SUBTREE grant over that node. `forOrgId` is safe by
+construction — an out-of-reach id simply returns no rows. Map the exception to
+403 in `bootstrap/app.php`:
+
+```php
+->withExceptions(function ($e) {
+    $e->render(fn (\LatchVector\Sso\Tenancy\OrgReachException $ex) =>
+        response()->json(['error' => 'forbidden'], 403));
+});
+```
+
+## 6. Test it, step by step
 
 **Auth** (behind `sso.auth`):
 

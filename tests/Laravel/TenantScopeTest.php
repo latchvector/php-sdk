@@ -8,6 +8,7 @@ use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Events\Dispatcher;
+use LatchVector\Sso\Tenancy\OrgReachException;
 use LatchVector\Sso\Tenancy\TenantContext;
 use LatchVector\Sso\Tests\Laravel\Fixtures\Record;
 use LatchVector\Sso\Tests\Laravel\Fixtures\Widget;
@@ -154,5 +155,74 @@ final class TenantScopeTest extends TestCase
         self::assertSame(10, (int) $r->tenant_id);
         self::assertSame(2, (int) $r->org_id);
         self::assertSame('/10/57/', $r->org_path);
+    }
+
+    public function testForOrgFiltersWithinReach(): void
+    {
+        $this->seedRecords();
+        // Caller reaches the whole /10/ subtree.
+        $this->context->set(tenantId: 10, subtreePaths: ['/10/']);
+
+        // A specific child, node only.
+        self::assertSame(['a'], Record::forOrg('/10/57/')->pluck('name')->all());
+
+        // The same child WITH its descendants.
+        $names = Record::forOrg('/10/57/', true)->pluck('name')->all();
+        sort($names);
+        self::assertSame(['a', 'a-child'], $names);
+
+        // A sibling — the other branch, node only.
+        self::assertSame(['b'], Record::forOrg('/10/58/')->pluck('name')->all());
+    }
+
+    public function testForOrgAcceptsPathWithoutTrailingSlash(): void
+    {
+        $this->seedRecords();
+        $this->context->set(tenantId: 10, subtreePaths: ['/10/']);
+
+        self::assertSame(['a'], Record::forOrg('/10/57')->pluck('name')->all());
+    }
+
+    public function testForOrgThrowsOutsideReach(): void
+    {
+        $this->seedRecords();
+        // Caller only reaches /10/57/ and below — not the sibling /10/58/.
+        $this->context->set(tenantId: 10, subtreePaths: ['/10/57/']);
+
+        $this->expectException(OrgReachException::class);
+        Record::forOrg('/10/58/')->get();
+    }
+
+    public function testForOrgSubtreeRefusedForSelfOnlyGrant(): void
+    {
+        $this->seedRecords();
+        // SELF grant at the node authorises the node, not its descendants.
+        $this->context->set(tenantId: 10, selfPaths: ['/10/57/']);
+
+        Record::forOrg('/10/57/')->get(); // node view is fine
+        $this->expectException(OrgReachException::class);
+        Record::forOrg('/10/57/', true)->get();
+    }
+
+    public function testForOrgIdIsSafeByIntersection(): void
+    {
+        $this->seedRecords();
+        // Caller reaches only /10/57/; org_id 4 lives at the sibling /10/58/.
+        $this->context->set(tenantId: 10, subtreePaths: ['/10/57/']);
+
+        self::assertSame(['a'], Record::forOrgId(2)->pluck('name')->all()); // in reach
+        self::assertSame([], Record::forOrgId(4)->pluck('name')->all());    // out of reach → empty
+    }
+
+    private function seedRecords(): void
+    {
+        $this->context->configure(false);
+        Record::query()->insert([
+            ['name' => 'root', 'tenant_id' => 10, 'org_id' => 1, 'org_path' => '/10/'],
+            ['name' => 'a', 'tenant_id' => 10, 'org_id' => 2, 'org_path' => '/10/57/'],
+            ['name' => 'a-child', 'tenant_id' => 10, 'org_id' => 3, 'org_path' => '/10/57/9/'],
+            ['name' => 'b', 'tenant_id' => 10, 'org_id' => 4, 'org_path' => '/10/58/'],
+        ]);
+        $this->context->configure(true);
     }
 }

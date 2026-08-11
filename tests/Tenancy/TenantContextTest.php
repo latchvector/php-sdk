@@ -90,6 +90,60 @@ final class TenantContextTest extends TestCase
         self::assertTrue($noList->isActive());
     }
 
+    public function testReachDistinguishesSelfFromSubtree(): void
+    {
+        $context = new TenantContext();
+        // SUBTREE grant over /2/, plus a lone SELF grant at /9/.
+        $context->set(tenantId: 1, subtreePaths: ['/2/'], selfPaths: ['/9/']);
+
+        // Under the subtree grant: both node-view and subtree-view allowed.
+        self::assertTrue($context->reaches('/2/5/'));
+        self::assertTrue($context->reachesSubtree('/2/5/'));
+
+        // The lone SELF node: viewable alone, but NOT its descendants.
+        self::assertTrue($context->reaches('/9/'));
+        self::assertFalse($context->reachesSubtree('/9/'));
+
+        // Outside reach entirely.
+        self::assertFalse($context->reaches('/3/'));
+        // /2/57/ is a real descendant of /2/ (the trailing slash keeps it from
+        // being confused with a sibling of /2/5/).
+        self::assertTrue($context->reaches('/2/57/'));
+    }
+
+    public function testAssertReachThrowsOutsideGrantButPassesWithin(): void
+    {
+        $context = new TenantContext();
+        $context->set(tenantId: 1, subtreePaths: ['/2/']);
+
+        $context->assertReach('/2/5/', includeSubtree: true); // within → no throw
+        $this->expectException(\LatchVector\Sso\Tenancy\OrgReachException::class);
+        $context->assertReach('/3/', includeSubtree: false);  // outside → throw
+    }
+
+    public function testAssertReachSkippedForBypassAndMachine(): void
+    {
+        $bypass = new TenantContext();
+        $bypass->set(tenantId: 1, bypass: true);
+        $bypass->assertReach('/anything/', includeSubtree: true); // no reach limit
+
+        $machine = new TenantContext();
+        $machine->set(tenantId: 1); // active, tenant-wide, no org reach
+        $machine->assertReach('/anything/', includeSubtree: true); // allowed within tenant
+
+        $this->addToAssertionCount(2); // both must NOT throw
+    }
+
+    public function testSelfGrantCannotRequestSubtree(): void
+    {
+        $context = new TenantContext();
+        $context->set(tenantId: 1, selfPaths: ['/2/5/']); // SELF only at the node
+
+        $context->assertReach('/2/5/', includeSubtree: false); // node view ok
+        $this->expectException(\LatchVector\Sso\Tenancy\OrgReachException::class);
+        $context->assertReach('/2/5/', includeSubtree: true); // descendants NOT granted
+    }
+
     /** @param list<string> $permissions */
     private function principal(array $permissions): Principal
     {

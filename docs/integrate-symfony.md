@@ -100,7 +100,26 @@ behalf of a forwarded user token, adopt its reach: `$context->fromPrincipal($ver
 `UPDATE`/`DELETE`. In long-running workers reset the context per message
 (`$context->forget()`, then set the message's tenant).
 
-## 4. Test it, step by step
+## 4. Filter within your subtree by a chosen org
+
+To narrow to one org inside the caller's reach, add the condition to a
+QueryBuilder with `OrgScope`:
+
+```php
+use LatchVector\Sso\Doctrine\OrgScope;
+
+$qb = $em->createQueryBuilder()->select('p')->from(Patient::class, 'p');
+OrgScope::apply($qb, 'p', '/2/5/', includeSubtree: false, context: $context);  // that node
+OrgScope::apply($qb, 'p', '/2/5/', includeSubtree: true,  context: $context);  // node + below
+OrgScope::byId($qb, 'p', 5);                                                    // by org id
+```
+
+It only **narrows** the always-on tenant filter. An org outside the token's reach
+throws `OrgReachException` — map it to 403 (e.g. rethrow `AccessDeniedException`
+in an exception listener); `includeSubtree = true` requires a SUBTREE grant over
+the node. `byId` is safe by construction (out-of-reach id → no rows).
+
+## 5. Test it, step by step
 
 **Auth** (behind the `^/api` firewall):
 

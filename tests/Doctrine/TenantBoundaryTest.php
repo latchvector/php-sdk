@@ -10,8 +10,10 @@ use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\Events;
 use Doctrine\ORM\ORMSetup;
 use Doctrine\ORM\Tools\SchemaTool;
+use LatchVector\Sso\Doctrine\OrgScope;
 use LatchVector\Sso\Doctrine\TenantFilter;
 use LatchVector\Sso\Doctrine\TenantStampListener;
+use LatchVector\Sso\Tenancy\OrgReachException;
 use LatchVector\Sso\Tenancy\TenantContext;
 use LatchVector\Sso\Tests\Doctrine\Fixtures\Invoice;
 use LatchVector\Sso\Tests\Doctrine\Fixtures\Ledger;
@@ -206,5 +208,60 @@ final class TenantBoundaryTest extends TestCase
         $self = $this->em->createQuery('select p from ' . Patient::class . ' p')->getResult();
         self::assertCount(1, $self);
         self::assertSame('/10/57/', $self[0]->getOrgPath());
+    }
+
+    public function testOrgScopeFiltersToAChosenOrgWithinReach(): void
+    {
+        $this->seedPatientTree();
+        $this->context->set(tenantId: 10, subtreePaths: ['/10/']); // reaches all of /10/
+        $this->refresh();
+
+        // Node only.
+        $node = OrgScope::apply(
+            $this->em->createQueryBuilder()->select('p')->from(Patient::class, 'p'),
+            'p',
+            '/10/57/',
+            includeSubtree: false,
+            context: $this->context,
+        )->getQuery()->getResult();
+        self::assertCount(1, $node);
+        self::assertSame('/10/57/', $node[0]->getOrgPath());
+
+        // Node and below.
+        $subtree = OrgScope::apply(
+            $this->em->createQueryBuilder()->select('p')->from(Patient::class, 'p'),
+            'p',
+            '/10/57/',
+            includeSubtree: true,
+            context: $this->context,
+        )->getQuery()->getResult();
+        self::assertCount(2, $subtree);
+    }
+
+    public function testOrgScopeThrowsOutsideReach(): void
+    {
+        $this->context->set(tenantId: 10, subtreePaths: ['/10/57/']); // not the sibling /10/58/
+
+        $this->expectException(OrgReachException::class);
+        OrgScope::apply(
+            $this->em->createQueryBuilder()->select('p')->from(Patient::class, 'p'),
+            'p',
+            '/10/58/',
+            includeSubtree: false,
+            context: $this->context,
+        );
+    }
+
+    private function seedPatientTree(): void
+    {
+        $this->context->set(tenantId: 10);
+        foreach ([['/10/', 100], ['/10/57/', 101], ['/10/57/9/', 102], ['/10/58/', 103]] as [$path, $orgId]) {
+            $p = new Patient('p' . $orgId);
+            $p->setOrgPath($path);
+            $p->setOrgId($orgId);
+            $this->em->persist($p);
+        }
+        $this->em->flush();
+        $this->em->clear();
     }
 }

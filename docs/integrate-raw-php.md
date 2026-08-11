@@ -69,6 +69,18 @@ Subtree scoping (only rows the caller reaches within the tenant):
 **Fail closed:** never run a tenant query without a verified `$p`. If there is no
 principal, return 401 — don't fall back to an unscoped query.
 
+**Filter by a chosen org within reach** — validate the requested branch against
+the token before trusting it (I'm `/2/`, caller asks for `/2/5/`):
+
+```php
+$requested = '/2/5/';
+if (! $p->canReach($requested)) { http_response_code(403); exit; }   // outside reach
+// node only:      WHERE tenant_id = ? AND org_path = ?         [tenantId, '/2/5/']
+// node and below: WHERE tenant_id = ? AND org_path LIKE ?      [tenantId, '/2/5/%']
+```
+
+The trailing slash on the path keeps `/2/5/` from matching a sibling `/2/57/`.
+
 ## 5. Machine (client_credentials) tokens
 
 ```php

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace LatchVector\Sso\Laravel;
 
 use Illuminate\Database\Eloquent\Builder;
+use LatchVector\Sso\Tenancy\OrgPath;
+use LatchVector\Sso\Tenancy\OrgReachException;
 use LatchVector\Sso\Tenancy\TenantContext;
 
 /**
@@ -117,5 +119,61 @@ trait BelongsToTenant
     public static function allTenants(): Builder
     {
         return static::withoutGlobalScope(TenantScope::class);
+    }
+
+    /**
+     * Narrow to a chosen org WITHIN the caller's reach — the "show me only /2/5/"
+     * case. This ANDs onto the always-on tenant scope, so it can only ever shrink
+     * the result, never widen it, and it refuses a branch the token can't see.
+     *
+     *   Post::forOrg('/2/5/')->get();          // exactly that node
+     *   Post::forOrg('/2/5/', true)->get();     // that node and everything below
+     *
+     * Default is the node alone (SELF). `$includeSubtree = true` also returns its
+     * descendants and requires a SUBTREE grant over the node — otherwise, and for
+     * any org outside reach, it throws {@see OrgReachException} (map to HTTP 403).
+     * A bypass caller or a machine token (tenant-wide) may target any org in the
+     * tenant.
+     */
+    public function scopeForOrg(Builder $query, string $orgPath, bool $includeSubtree = false): Builder
+    {
+        $path = OrgPath::normalize($orgPath);
+
+        /** @var TenantContext $context */
+        $context = app(TenantContext::class);
+        $this->assertOrgReach($context, $path, $includeSubtree);
+
+        $column = $this->getQualifiedOrgPathColumn();
+        if ($includeSubtree) {
+            return $query->where($column, 'like', OrgPath::escapeLike($path) . '%');
+        }
+
+        return $query->where($column, '=', $path);
+    }
+
+    /**
+     * Narrow to a single org node by id — the "filter by the org id from a
+     * dropdown" case. Safe by construction: it ANDs onto the tenant scope, so an
+     * id outside the caller's reach simply yields no rows (the token carries no
+     * id→path map, so there is nothing to pre-validate). For an explicit 403 on an
+     * out-of-reach target, filter by path with {@see scopeForOrg} instead.
+     */
+    public function scopeForOrgId(Builder $query, int $orgId): Builder
+    {
+        return $query->where($this->getTable() . '.org_id', '=', $orgId);
+    }
+
+    private function assertOrgReach(TenantContext $context, string $path, bool $includeSubtree): void
+    {
+        try {
+            $context->assertReach($path, $includeSubtree);
+        } catch (OrgReachException $e) {
+            // In a real Laravel app raise the framework's own exception so the
+            // handler renders 403 automatically; standalone, let ours propagate.
+            if (class_exists(\Illuminate\Auth\Access\AuthorizationException::class)) {
+                throw new \Illuminate\Auth\Access\AuthorizationException($e->getMessage(), previous: $e);
+            }
+            throw $e;
+        }
     }
 }
