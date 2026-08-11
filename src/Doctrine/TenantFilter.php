@@ -61,6 +61,20 @@ final class TenantFilter extends SQLFilter
             return '';
         }
 
+        // Every tenant entity must declare HOW it is isolated. Org-tree isolation
+        // is the default for tenant data (so sibling orgs can't see each other);
+        // an entity that opts out must say so with TenantWide. One that declares
+        // neither is a programming error — fail loud, never leak the whole tenant.
+        $subtree = is_a($class, OrgSubtreeAware::class, true);
+        if (!$subtree && !is_a($class, TenantWide::class, true)) {
+            throw new \LogicException(sprintf(
+                '%s is tenant-scoped but declares no isolation mode. Implement '
+                . 'OrgSubtreeAware (org-tree isolation — the default for tenant data) '
+                . 'or TenantWide (deliberately visible to the whole tenant).',
+                $class,
+            ));
+        }
+
         // Fail closed: active (or unconfigured) but no known tenant → no rows.
         $tenantId = $ctx?->tenantId();
         if ($tenantId === null) {
@@ -71,7 +85,7 @@ final class TenantFilter extends SQLFilter
 
         // Subtree narrowing, only for OrgSubtreeAware entities and when the token
         // carries org reach (a machine token has none → tenant-wide, still safe).
-        if (is_a($class, OrgSubtreeAware::class, true) && $ctx !== null && $ctx->hasOrgReach()) {
+        if ($subtree && $ctx !== null && $ctx->hasOrgReach()) {
             $conn = $this->getConnection();
             $ors = [];
             foreach ($ctx->subtreePaths() as $prefix) {

@@ -61,38 +61,46 @@ latch_vector_sso:
 
 ## Make an entity tenant-owned
 
-**Tenant mode** (the hard wall between customers):
+An entity must declare **how** it is isolated. Org-tree isolation is the default;
+an entity that declares neither mode is rejected loudly, so you can never
+accidentally leave tenant data visible to the whole tenant.
+
+**Subtree mode (the default)** — confine to the caller's reach *within* the
+tenant so a department sees only its own branch. A SELF grant sees exactly its
+node, a SUBTREE grant sees its node and everything below — decided by the token.
+One trait maps all three columns (`tenant_id`, `org_id`, `org_path`):
 
 ```php
 use Doctrine\ORM\Mapping as ORM;
-use LatchVector\Sso\Doctrine\BelongsToTenant;
-use LatchVector\Sso\Doctrine\TenantAware;
+use LatchVector\Sso\Doctrine\BelongsToTenantTree;
+use LatchVector\Sso\Doctrine\OrgSubtreeAware;
 
 #[ORM\Entity]
-class Invoice implements TenantAware
+class Patient implements OrgSubtreeAware
+{
+    use BelongsToTenantTree;   // tenant_id + org_id + org_path
+    // … your fields …
+}
+```
+
+**Tenant-wide mode** (the hard wall between customers only — every org under the
+tenant sees the rows). Deliberate opt-out for shared reference data:
+
+```php
+use LatchVector\Sso\Doctrine\BelongsToTenant;
+use LatchVector\Sso\Doctrine\TenantWide;
+
+#[ORM\Entity]
+class TenantSetting implements TenantWide
 {
     use BelongsToTenant;   // maps the `tenant_id` column + accessors
     // … your fields …
 }
 ```
 
-**Subtree mode** (also confine to the caller's reach *within* the tenant — a
-department sees only its own branch). A SELF grant sees exactly its node, a
-SUBTREE grant sees its node and everything below — decided by the token:
-
-```php
-use LatchVector\Sso\Doctrine\BelongsToOrgSubtree;
-use LatchVector\Sso\Doctrine\BelongsToTenant;
-use LatchVector\Sso\Doctrine\OrgSubtreeAware;
-
-#[ORM\Entity]
-class Patient implements OrgSubtreeAware
-{
-    use BelongsToTenant;
-    use BelongsToOrgSubtree;   // adds `org_id` + `org_path`
-    // … your fields …
-}
-```
+A machine token has no user reach, so it stays tenant-wide even on a subtree
+entity. For a backend acting on behalf of a forwarded user token, adopt the
+user's reach with `$tenantContext->fromPrincipal($verifier->verify($userToken))`.
 
 Add the columns with a migration and index them for the boundary:
 

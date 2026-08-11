@@ -6,11 +6,16 @@ namespace LatchVector\Sso\Tests\Doctrine\Fixtures;
 
 use Doctrine\ORM\Mapping as ORM;
 use LatchVector\Sso\Doctrine\BelongsToTenant;
-use LatchVector\Sso\Doctrine\TenantWide;
+use LatchVector\Sso\Doctrine\TenantAware;
 
+/**
+ * A misconfigured entity: tenant-owned but declaring NEITHER OrgSubtreeAware nor
+ * TenantWide. Exists only to prove the filter/listener reject it loudly instead
+ * of silently exposing it to the whole tenant.
+ */
 #[ORM\Entity]
-#[ORM\Table(name: 'invoice')]
-class Invoice implements TenantWide
+#[ORM\Table(name: 'ledger')]
+class Ledger implements TenantAware
 {
     use BelongsToTenant;
 
@@ -20,11 +25,11 @@ class Invoice implements TenantWide
     private ?int $id = null;
 
     #[ORM\Column(type: 'string')]
-    public string $number;
+    public string $name;
 
-    public function __construct(string $number)
+    public function __construct(string $name)
     {
-        $this->number = $number;
+        $this->name = $name;
     }
 
     public function getId(): ?int

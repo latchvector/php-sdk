@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace LatchVector\Sso\Tenancy;
 
+use LatchVector\Sso\Principal;
+
 /**
  * The tenant, and the caller's reach within it, taken from the verified token.
  *
@@ -57,6 +59,31 @@ final class TenantContext
         $this->ownOrgPath = $ownOrgPath;
         $this->subtreePaths = $subtreePaths;
         $this->selfPaths = $selfPaths;
+    }
+
+    /**
+     * Adopt a verified token's tenant and org reach in one call.
+     *
+     * This is what the framework authenticators use, and it is the delegation
+     * hook for a machine-fronted backend: a service that authenticates with its
+     * own machine token but acts on behalf of an end user should verify the
+     * user's forwarded token and call this — so the model scopes to the USER's
+     * org subtree, not the machine (which is tenant-wide). A machine's own token
+     * carries no user scope claims, so scoping it this way stays tenant-wide.
+     *
+     * @param list<string> $bypassPermissions codes whose holder is left
+     *        unconstrained (a platform operator). Empty = nobody bypasses.
+     */
+    public function fromPrincipal(Principal $principal, array $bypassPermissions = []): void
+    {
+        $this->set(
+            tenantId: $principal->tenantId,
+            bypass: $bypassPermissions !== [] && $principal->hasAny(...$bypassPermissions),
+            ownOrgId: $principal->orgId,
+            ownOrgPath: $principal->orgPath,
+            subtreePaths: $principal->scopeSubtree,
+            selfPaths: $principal->scopeSelf,
+        );
     }
 
     public function forget(): void

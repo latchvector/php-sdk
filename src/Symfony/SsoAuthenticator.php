@@ -83,13 +83,9 @@ final class SsoAuthenticator extends AbstractAuthenticator
         // tenant-aware queries (Doctrine filter / Laravel scope) are confined to
         // this caller for the rest of the request. A holder of the configured
         // bypass permission is left unconstrained.
-        $this->tenantContext?->set(
-            tenantId: $principal->tenantId,
-            bypass: $this->bypassPermission !== null && $principal->has($this->bypassPermission),
-            ownOrgId: $principal->orgId,
-            ownOrgPath: $principal->orgPath,
-            subtreePaths: $principal->scopeSubtree,
-            selfPaths: $principal->scopeSelf,
+        $this->tenantContext?->fromPrincipal(
+            $principal,
+            $this->bypassPermission !== null ? [$this->bypassPermission] : [],
         );
 
         // SelfValidatingPassport: the signature already proved who this is,

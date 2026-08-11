@@ -34,6 +34,18 @@ final class TenantStampListener
             return;
         }
 
+        // Mirror the filter: a tenant entity must declare its isolation mode.
+        // Fail loud on an undeclared one rather than stamping a row that would
+        // then be visible to the whole tenant.
+        if (!$entity instanceof OrgSubtreeAware && !$entity instanceof TenantWide) {
+            throw new \LogicException(sprintf(
+                '%s is tenant-scoped but declares no isolation mode. Implement '
+                . 'OrgSubtreeAware (org-tree isolation — the default for tenant data) '
+                . 'or TenantWide (deliberately visible to the whole tenant).',
+                $entity::class,
+            ));
+        }
+
         $tenantId = $this->context->tenantId();
         if ($tenantId === null) {
             throw new \RuntimeException(sprintf(

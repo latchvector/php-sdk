@@ -9,6 +9,7 @@ use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Events\Dispatcher;
 use LatchVector\Sso\Tenancy\TenantContext;
+use LatchVector\Sso\Tests\Laravel\Fixtures\Record;
 use LatchVector\Sso\Tests\Laravel\Fixtures\Widget;
 use PHPUnit\Framework\TestCase;
 
@@ -50,6 +51,15 @@ final class TenantScopeTest extends TestCase
             $table->unsignedBigInteger('tenant_id')->nullable();
         });
 
+        // A table using the DEFAULT (subtree) scope — carries the org columns.
+        Capsule::schema()->create('records', function ($table): void {
+            $table->increments('id');
+            $table->string('name');
+            $table->unsignedBigInteger('tenant_id')->nullable();
+            $table->unsignedBigInteger('org_id')->nullable();
+            $table->string('org_path')->nullable();
+        });
+
         // Seed two tenants with scoping deliberately off.
         $this->context->configure(false);
         Widget::query()->insert([
@@ -62,6 +72,7 @@ final class TenantScopeTest extends TestCase
     protected function tearDown(): void
     {
         Capsule::schema()->drop('widgets');
+        Capsule::schema()->drop('records');
         Container::setInstance(null);
     }
 
@@ -105,5 +116,43 @@ final class TenantScopeTest extends TestCase
         $this->context->set(tenantId: null); // active, no tenant
         $this->expectException(\RuntimeException::class);
         Widget::create(['name' => 'nope']);
+    }
+
+    public function testDefaultScopeIsolatesSiblingOrgs(): void
+    {
+        // Seed three org nodes in tenant 10, scoping off.
+        $this->context->configure(false);
+        Record::query()->insert([
+            ['name' => 'root', 'tenant_id' => 10, 'org_id' => 1, 'org_path' => '/10/'],
+            ['name' => 'a', 'tenant_id' => 10, 'org_id' => 2, 'org_path' => '/10/57/'],
+            ['name' => 'a-child', 'tenant_id' => 10, 'org_id' => 3, 'org_path' => '/10/57/9/'],
+            ['name' => 'b', 'tenant_id' => 10, 'org_id' => 4, 'org_path' => '/10/58/'],
+        ]);
+        $this->context->configure(true);
+
+        // A SUBTREE grant at /10/57/ sees that node and below — never sibling B.
+        $this->context->set(tenantId: 10, subtreePaths: ['/10/57/']);
+        $names = Record::query()->pluck('name')->all();
+        sort($names);
+        self::assertSame(['a', 'a-child'], $names);
+
+        // A SELF grant at /10/57/ sees exactly that node.
+        $this->context->set(tenantId: 10, selfPaths: ['/10/57/']);
+        self::assertSame(['a'], Record::query()->pluck('name')->all());
+    }
+
+    public function testDefaultScopeStampsCallersOwnNode(): void
+    {
+        $this->context->set(
+            tenantId: 10,
+            ownOrgId: 2,
+            ownOrgPath: '/10/57/',
+            subtreePaths: ['/10/57/'],
+        );
+        $r = Record::create(['name' => 'fresh']);
+
+        self::assertSame(10, (int) $r->tenant_id);
+        self::assertSame(2, (int) $r->org_id);
+        self::assertSame('/10/57/', $r->org_path);
     }
 }

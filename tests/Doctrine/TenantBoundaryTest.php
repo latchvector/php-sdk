@@ -14,6 +14,7 @@ use LatchVector\Sso\Doctrine\TenantFilter;
 use LatchVector\Sso\Doctrine\TenantStampListener;
 use LatchVector\Sso\Tenancy\TenantContext;
 use LatchVector\Sso\Tests\Doctrine\Fixtures\Invoice;
+use LatchVector\Sso\Tests\Doctrine\Fixtures\Ledger;
 use LatchVector\Sso\Tests\Doctrine\Fixtures\Patient;
 use PHPUnit\Framework\TestCase;
 
@@ -161,6 +162,24 @@ final class TenantBoundaryTest extends TestCase
         self::assertSame('A1', $a[0]->number);
         self::assertCount(1, $b);
         self::assertSame('B1', $b[0]->number);
+    }
+
+    public function testUndeclaredIsolationModeIsRejectedOnRead(): void
+    {
+        $this->context->set(tenantId: 10);
+        $this->refresh();
+
+        // Ledger is TenantAware but declares neither subtree nor tenant-wide —
+        // it must fail loud, never silently expose the whole tenant.
+        $this->expectException(\LogicException::class);
+        $this->em->createQuery('select l from ' . Ledger::class . ' l')->getResult();
+    }
+
+    public function testUndeclaredIsolationModeIsRejectedOnWrite(): void
+    {
+        $this->context->set(tenantId: 10);
+        $this->expectException(\LogicException::class);
+        $this->em->persist(new Ledger('x')); // prePersist rejects it
     }
 
     public function testSubtreeGrantSeesNodeAndBelow_SelfGrantSeesOnlyNode(): void

@@ -16,21 +16,23 @@ use LatchVector\Sso\Tenancy\TenantContext;
  *       use \LatchVector\Sso\Laravel\BelongsToTenant;
  *   }
  *
- * By default a model is scoped to the **tenant** — the hard wall between
- * customers. To also confine it to the caller's reach WITHIN the tenant (so a
- * department sees only its own branch), declare `subtree` mode and give the
- * table an `org_path` column:
+ * By default a model is scoped to the caller's org **subtree** — sibling orgs
+ * within the same tenant never see each other's rows. Such a table needs an
+ * `org_path` column. What is visible is decided entirely by the token: a SELF
+ * grant sees exactly that node, a SUBTREE grant sees that node and everything
+ * below it.
  *
- *   class Patient extends Model
+ * For genuinely tenant-wide data (visible to every org under the tenant), opt
+ * out deliberately:
+ *
+ *   class TenantSetting extends Model
  *   {
  *       use \LatchVector\Sso\Laravel\BelongsToTenant;
- *       protected string $tenantScope = 'subtree';
+ *       protected string $tenantScope = 'tenant';
  *   }
  *
- * What is visible in `subtree` mode is decided entirely by the token: a SELF
- * grant sees exactly that node, a SUBTREE grant sees that node and everything
- * below it. A caller with a bypass permission sees across tenants. Reach across
- * the scope deliberately with {@see allTenants()}.
+ * A caller with a bypass permission sees across tenants. Reach across the scope
+ * deliberately with {@see allTenants()}.
  */
 trait BelongsToTenant
 {
@@ -87,10 +89,18 @@ trait BelongsToTenant
         return $this->getTable() . '.' . $this->getTenantColumn();
     }
 
-    /** `tenant` (default) or `subtree`. Override with `protected $tenantScope`. */
+    /**
+     * `subtree` (the default) or `tenant`. Override with `protected $tenantScope`.
+     *
+     * The default is `subtree` so tenant data is org-tree isolated out of the box
+     * — sibling orgs never see each other's rows. Such a model needs an `org_path`
+     * column; without one a scoped read fails loudly rather than leaking. Opt a
+     * table into whole-tenant visibility deliberately with
+     * `protected string $tenantScope = 'tenant'`.
+     */
     public function getTenantScopeMode(): string
     {
-        return property_exists($this, 'tenantScope') ? $this->tenantScope : 'tenant';
+        return property_exists($this, 'tenantScope') ? $this->tenantScope : 'subtree';
     }
 
     public function getOrgPathColumn(): string
