@@ -25,7 +25,18 @@ final class TenantScope implements Scope
     {
         /** @var TenantContext $context */
         $context = app(TenantContext::class);
-        if (!$context->shouldScope()) {
+
+        // Scoping deliberately off (sandbox/dev) or a bypass caller: unconstrained.
+        if (!$context->isActive()) {
+            return;
+        }
+
+        // Fail closed: scoping is ON but we don't know the tenant (an
+        // unauthenticated path, a forgotten context, a queue job). Show NOTHING
+        // rather than every tenant's rows — an accidental leak must be impossible.
+        if ($context->tenantId() === null) {
+            $builder->whereRaw('1 = 0');
+
             return;
         }
 

@@ -6,6 +6,7 @@ namespace LatchVector\Sso\Symfony;
 
 use LatchVector\Sso\Exception\TokenVerificationException;
 use LatchVector\Sso\Principal;
+use LatchVector\Sso\Tenancy\TenantContext;
 use LatchVector\Sso\TokenVerifier;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -46,8 +47,18 @@ use Symfony\Component\Security\Http\Authenticator\Passport\SelfValidatingPasspor
  */
 final class SsoAuthenticator extends AbstractAuthenticator
 {
-    public function __construct(private readonly TokenVerifier $verifier)
-    {
+    /**
+     * @param TenantContext|null $tenantContext populated from the verified token
+     *        so the Doctrine tenant filter (and Laravel scope) know who is asking.
+     *        Null when tenancy isn't used.
+     * @param string|null $bypassPermission a permission code whose holder is left
+     *        unconstrained by tenant scoping (e.g. a platform operator). Null = none.
+     */
+    public function __construct(
+        private readonly TokenVerifier $verifier,
+        private readonly ?TenantContext $tenantContext = null,
+        private readonly ?string $bypassPermission = null,
+    ) {
     }
 
     public function supports(Request $request): ?bool
@@ -67,6 +78,15 @@ final class SsoAuthenticator extends AbstractAuthenticator
         }
 
         $request->attributes->set('sso_principal', $principal);
+
+        // Publish the tenant + the caller's reach to the shared context, so
+        // tenant-aware queries (Doctrine filter / Laravel scope) are confined to
+        // this caller for the rest of the request. A holder of the configured
+        // bypass permission is left unconstrained.
+        $this->tenantContext?->fromPrincipal(
+            $principal,
+            $this->bypassPermission !== null ? [$this->bypassPermission] : [],
+        );
 
         // SelfValidatingPassport: the signature already proved who this is,
         // so there is no second credential to check and no user provider

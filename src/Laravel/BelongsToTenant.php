@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace LatchVector\Sso\Laravel;
 
 use Illuminate\Database\Eloquent\Builder;
+use LatchVector\Sso\Tenancy\OrgPath;
+use LatchVector\Sso\Tenancy\OrgReachException;
 use LatchVector\Sso\Tenancy\TenantContext;
 
 /**
@@ -16,21 +18,23 @@ use LatchVector\Sso\Tenancy\TenantContext;
  *       use \LatchVector\Sso\Laravel\BelongsToTenant;
  *   }
  *
- * By default a model is scoped to the **tenant** — the hard wall between
- * customers. To also confine it to the caller's reach WITHIN the tenant (so a
- * department sees only its own branch), declare `subtree` mode and give the
- * table an `org_path` column:
+ * By default a model is scoped to the caller's org **subtree** — sibling orgs
+ * within the same tenant never see each other's rows. Such a table needs an
+ * `org_path` column. What is visible is decided entirely by the token: a SELF
+ * grant sees exactly that node, a SUBTREE grant sees that node and everything
+ * below it.
  *
- *   class Patient extends Model
+ * For genuinely tenant-wide data (visible to every org under the tenant), opt
+ * out deliberately:
+ *
+ *   class TenantSetting extends Model
  *   {
  *       use \LatchVector\Sso\Laravel\BelongsToTenant;
- *       protected string $tenantScope = 'subtree';
+ *       protected string $tenantScope = 'tenant';
  *   }
  *
- * What is visible in `subtree` mode is decided entirely by the token: a SELF
- * grant sees exactly that node, a SUBTREE grant sees that node and everything
- * below it. A caller with a bypass permission sees across tenants. Reach across
- * the scope deliberately with {@see allTenants()}.
+ * A caller with a bypass permission sees across tenants. Reach across the scope
+ * deliberately with {@see allTenants()}.
  */
 trait BelongsToTenant
 {
@@ -41,8 +45,21 @@ trait BelongsToTenant
         static::creating(function ($model): void {
             /** @var TenantContext $context */
             $context = app(TenantContext::class);
-            if (!$context->shouldScope()) {
+
+            // Scoping deliberately off (sandbox/dev) or a bypass caller: leave the
+            // row as-is (the caller is responsible for the tenant column).
+            if (!$context->isActive()) {
                 return;
+            }
+
+            // Fail closed on writes too: refuse to insert a tenant-owned row when
+            // scoping is on but no tenant is known — inserting it unscoped (or
+            // with a NULL tenant) is exactly the accidental leak we must prevent.
+            if ($context->tenantId() === null) {
+                throw new \RuntimeException(
+                    'Cannot persist ' . get_class($model) . ': tenant scoping is active but no tenant '
+                    . 'is set. Authenticate first, or disable scoping deliberately for this operation.',
+                );
             }
 
             $tenantColumn = $model->getTenantColumn();
@@ -74,10 +91,18 @@ trait BelongsToTenant
         return $this->getTable() . '.' . $this->getTenantColumn();
     }
 
-    /** `tenant` (default) or `subtree`. Override with `protected $tenantScope`. */
+    /**
+     * `subtree` (the default) or `tenant`. Override with `protected $tenantScope`.
+     *
+     * The default is `subtree` so tenant data is org-tree isolated out of the box
+     * — sibling orgs never see each other's rows. Such a model needs an `org_path`
+     * column; without one a scoped read fails loudly rather than leaking. Opt a
+     * table into whole-tenant visibility deliberately with
+     * `protected string $tenantScope = 'tenant'`.
+     */
     public function getTenantScopeMode(): string
     {
-        return property_exists($this, 'tenantScope') ? $this->tenantScope : 'tenant';
+        return property_exists($this, 'tenantScope') ? $this->tenantScope : 'subtree';
     }
 
     public function getOrgPathColumn(): string
@@ -94,5 +119,61 @@ trait BelongsToTenant
     public static function allTenants(): Builder
     {
         return static::withoutGlobalScope(TenantScope::class);
+    }
+
+    /**
+     * Narrow to a chosen org WITHIN the caller's reach — the "show me only /2/5/"
+     * case. This ANDs onto the always-on tenant scope, so it can only ever shrink
+     * the result, never widen it, and it refuses a branch the token can't see.
+     *
+     *   Post::forOrg('/2/5/')->get();          // exactly that node
+     *   Post::forOrg('/2/5/', true)->get();     // that node and everything below
+     *
+     * Default is the node alone (SELF). `$includeSubtree = true` also returns its
+     * descendants and requires a SUBTREE grant over the node — otherwise, and for
+     * any org outside reach, it throws {@see OrgReachException} (map to HTTP 403).
+     * A bypass caller or a machine token (tenant-wide) may target any org in the
+     * tenant.
+     */
+    public function scopeForOrg(Builder $query, string $orgPath, bool $includeSubtree = false): Builder
+    {
+        $path = OrgPath::normalize($orgPath);
+
+        /** @var TenantContext $context */
+        $context = app(TenantContext::class);
+        $this->assertOrgReach($context, $path, $includeSubtree);
+
+        $column = $this->getQualifiedOrgPathColumn();
+        if ($includeSubtree) {
+            return $query->where($column, 'like', OrgPath::escapeLike($path) . '%');
+        }
+
+        return $query->where($column, '=', $path);
+    }
+
+    /**
+     * Narrow to a single org node by id — the "filter by the org id from a
+     * dropdown" case. Safe by construction: it ANDs onto the tenant scope, so an
+     * id outside the caller's reach simply yields no rows (the token carries no
+     * id→path map, so there is nothing to pre-validate). For an explicit 403 on an
+     * out-of-reach target, filter by path with {@see scopeForOrg} instead.
+     */
+    public function scopeForOrgId(Builder $query, int $orgId): Builder
+    {
+        return $query->where($this->getTable() . '.org_id', '=', $orgId);
+    }
+
+    private function assertOrgReach(TenantContext $context, string $path, bool $includeSubtree): void
+    {
+        try {
+            $context->assertReach($path, $includeSubtree);
+        } catch (OrgReachException $e) {
+            // In a real Laravel app raise the framework's own exception so the
+            // handler renders 403 automatically; standalone, let ours propagate.
+            if (class_exists(\Illuminate\Auth\Access\AuthorizationException::class)) {
+                throw new \Illuminate\Auth\Access\AuthorizationException($e->getMessage(), previous: $e);
+            }
+            throw $e;
+        }
     }
 }

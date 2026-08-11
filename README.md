@@ -17,7 +17,7 @@ composer require latchvector/sso
 ## Contents
 
 - [Protecting an API — the common case](#protecting-an-api--the-common-case)
-- [Multitenancy (Laravel)](#multitenancy-laravel)
+- [Multitenancy (Laravel & Symfony)](#multitenancy-laravel--symfony)
 - [What `audience` is for](#what-audience-is-for)
 - [The principal](#the-principal)
 - [Logging users in](#logging-users-in)
@@ -223,88 +223,162 @@ $machine = $sso->clientCredentials($clientId, $clientSecret, ['reports.write']);
 
 ---
 
-## Multitenancy (Laravel)
+## Multitenancy (Laravel & Symfony)
 
 Verifying a token tells you *who* is calling. Multitenancy is about what data
-they may touch. The SDK ties your Eloquent models to the tenant in the verified
-token, so a query cannot read or write another tenant's rows even if you forget
-the `where` clause.
+they may touch. The SDK ties your models to the tenant **and org reach** in the
+verified token, so a query cannot read or write outside them even if you forget
+the `where` clause. It works the same on Laravel (Eloquent) and Symfony
+(Doctrine).
 
-Add the trait to any model with a `tenant_id` column:
+**Org-tree isolated by default.** A `tenant_id` is the hard wall *between*
+customers; but within one customer, sibling orgs must not see each other's rows
+either. So a tenant-owned model is confined to the caller's **org subtree** out
+of the box — you opt a table into whole-tenant visibility deliberately, never by
+forgetting.
+
+The columns a tenant-owned table carries:
+
+| Column | Type | |
+|---|---|---|
+| `tenant_id` | `bigint` | the hard customer wall — every tenant-aware table |
+| `org_id` | `bigint` | the owning node — subtree tables (the default) |
+| `org_path` | `varchar` | materialized path `/1/57/903/`, trailing slash — subtree tables |
+
+### Laravel
+
+Add the trait to a model that has the three columns:
 
 ```php
 use Illuminate\Database\Eloquent\Model;
 use LatchVector\Sso\Laravel\BelongsToTenant;
 
-class Invoice extends Model
+class Chart extends Model
+{
+    use BelongsToTenant;   // org-subtree isolated (the default)
+}
+```
+
+For genuinely tenant-wide data (visible to every org under the tenant), opt out —
+only `tenant_id` needed:
+
+```php
+class TenantSetting extends Model
 {
     use BelongsToTenant;
+    protected string $tenantScope = 'tenant';
 }
 ```
 
 Behind the `sso.auth` (or `sso.client`) middleware, that is all:
 
 ```php
-Invoice::all();          // only the caller's tenant
-Invoice::create([...]);  // tenant_id stamped automatically
-$invoice->update([...]); // still scoped — you cannot touch another tenant's row
+Chart::all();          // only the caller's reach within their tenant
+Chart::create([...]);  // tenant_id + the caller's own org_id/org_path stamped
+$chart->update([...]); // still scoped — you cannot touch a row outside your reach
 ```
 
-The scope comes from the `tenant_id` claim in the token, bound to the request by
-the auth middleware. Configure it in `config/latchvector-sso.php`:
+Configure in `config/latchvector-sso.php`:
 
 ```php
 'tenant' => [
-    // Turn OFF in a sandbox / local dev so testing isn't bound to one tenant.
-    'enabled' => env('SSO_TENANT_SCOPING', true),
+    'enabled' => env('SSO_TENANT_SCOPING', true), // OFF in sandbox/local dev
     'column'  => 'tenant_id',
-    // Callers with any of these permissions see across tenants — platform
-    // operators, not ordinary admins.
-    'bypass_permissions' => ['PLATFORM_ADMIN'],
+    'bypass_permissions' => ['PLATFORM_ADMIN'],    // see across tenants — operators only
 ],
 ```
 
-- **Bypass.** A caller whose token carries a `bypass_permissions` code (e.g. a
-  platform operator) is left unconstrained. An org admin is still bound to their
-  own tenant.
-- **Sandbox.** Set `SSO_TENANT_SCOPING=false` in dev so seed data and tests
-  aren't confined to one tenant.
-- **Cross-tenant on purpose.** A nightly report that must span tenants uses
-  `Invoice::allTenants()->...` — explicit, greppable, never accidental.
-- **Console & queues.** With no request there is no tenant, so the scope is
-  inert. In a queued job that must be tenant-bound, set it yourself:
-  `app(\LatchVector\Sso\Tenancy\TenantContext::class)->set($tenantId);`
+### Symfony (Doctrine)
 
-### Confining to a sub-tree
-
-`tenant_id` is the hard wall *between* customers. *Within* one customer, an
-admin of a sub-org should often see only their slice of the org tree, not the
-whole tenant. Opt a model into **subtree mode** and it is narrowed to exactly
-the org paths the caller's token grants:
+Enable the bundle (`config/bundles.php`) and each entity **declares its isolation
+mode** — the default (subtree) is one trait, and an entity that declares neither
+mode is rejected loudly rather than exposed to the whole tenant:
 
 ```php
-class Chart extends Model
+use Doctrine\ORM\Mapping as ORM;
+use LatchVector\Sso\Doctrine\{BelongsToTenantTree, OrgSubtreeAware};
+
+#[ORM\Entity]
+class Chart implements OrgSubtreeAware
 {
-    use BelongsToTenant;
-    protected $tenantScope = 'subtree'; // default is 'tenant'
+    use BelongsToTenantTree;   // tenant_id + org_id + org_path, org-subtree isolated
 }
 ```
 
-The model needs, alongside `tenant_id`, an `org_id` and an `org_path` column (a
-materialized path like `/1/57/903/`). New rows are stamped with the writer's own
-node; reads are confined to:
+```php
+use LatchVector\Sso\Doctrine\{BelongsToTenant, TenantWide};
+
+#[ORM\Entity]
+class TenantSetting implements TenantWide   // deliberately whole-tenant
+{
+    use BelongsToTenant;
+}
+```
+
+The bundle registers the Doctrine SQL filter (enabled for the whole
+EntityManager, so it is fail-closed before auth), the prePersist stamp listener,
+and the `SsoAuthenticator` that fills the context from the token. See
+**[docs/symfony-tenancy.md](docs/symfony-tenancy.md)** for the escape hatches
+(native SQL, bulk DQL, workers).
+
+### How the reach is decided
+
+New rows are stamped with the writer's own node; reads are confined to:
 
 - **SUBTREE** grants — the caller's node *and everything below it* (a
   left-anchored prefix match on `org_path`);
 - **SELF** grants — that node *only* (an exact match).
 
-Which applies is decided by the caller's roles at token-issue time and carried
-in the `scope_subtree` / `scope_self` claims — you write nothing. A machine
+Which applies is decided by the caller's roles at token-issue time and carried in
+the `scope_subtree` / `scope_self` claims — you write nothing. A machine
 (client-credentials) token has no org reach, so a subtree model falls back to
 tenant-wide for it — still leak-safe across customers.
 
 > The trailing slash matters. Paths are stored `/1/57/` (not `/1/57`), so the
 > prefix `/1/57/` can never leak into a sibling like `/1/570/`.
+
+### Filter within your subtree by a chosen org
+
+Let a caller narrow to one org **inside** their reach (I'm `/2/`, show me only
+`/2/5/`). This ANDs onto the always-on scope, so it only ever shrinks the result,
+and a branch outside the token's reach throws `OrgReachException` (map to 403):
+
+```php
+// Laravel
+Chart::forOrg('/2/5/')->get();        // exactly that node (SELF)
+Chart::forOrg('/2/5/', true)->get();  // node and everything below (needs a SUBTREE grant)
+Chart::forOrgId(5)->get();            // single node by org id (safe by intersection)
+
+// Symfony
+use LatchVector\Sso\Doctrine\OrgScope;
+OrgScope::apply($qb, 'c', '/2/5/', includeSubtree: false, context: $context);
+OrgScope::byId($qb, 'c', 5);
+```
+
+### Acting on behalf of a user (delegation)
+
+A backend that authenticates with its own **machine** token but serves an end
+user should scope by the *user*, not the (tenant-wide) machine. Verify the
+forwarded user token and adopt its reach:
+
+```php
+$user = $verifier->verify($forwardedUserToken);
+app(TenantContext::class)->fromPrincipal($user);   // models now scope to the user's subtree
+```
+
+### Operational notes
+
+- **Bypass.** A caller whose token carries a `bypass_permissions` code (a
+  platform operator) is left unconstrained. An org admin is still bound to their
+  own tenant.
+- **Sandbox.** Set `SSO_TENANT_SCOPING=false` in dev so seed data and tests
+  aren't confined to one tenant.
+- **Cross-tenant on purpose.** Laravel `Chart::allTenants()->...`; Doctrine
+  `$tenantContext->configure(false)` for that operation — explicit, greppable.
+- **Console & queues.** With no request there is no tenant, so the scope is
+  fail-closed. In a job that must be tenant-bound, set it yourself:
+  `app(\LatchVector\Sso\Tenancy\TenantContext::class)->set($tenantId);` (and
+  `forget()` between messages in a long-running worker).
 
 ### Multitenancy at scale
 
@@ -359,6 +433,8 @@ $principal->orgId        // 57
 $principal->tenantId     // 1
 $principal->orgPath      // "/1/57/"
 $principal->permissions  // ['invoice.approve']
+$principal->scopeSelf     // nodes the caller may act on (that node only)
+$principal->scopeSubtree  // nodes the caller may act on together with everything below
 $principal->expiresAt    // DateTimeImmutable
 
 $principal->has('invoice.approve');

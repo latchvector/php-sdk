@@ -52,14 +52,7 @@ final class AuthenticateWithSso
         // the org paths the token grants. A caller holding a configured bypass
         // permission (a platform operator) is left unconstrained.
         $bypass = (array) config('latchvector-sso.tenant.bypass_permissions', []);
-        app(TenantContext::class)->set(
-            $principal->tenantId,
-            array_intersect($bypass, $principal->permissions) !== [],
-            $principal->orgId,
-            $principal->orgPath,
-            $principal->scopeSubtree,
-            $principal->scopeSelf,
-        );
+        app(TenantContext::class)->fromPrincipal($principal, array_values($bypass));
 
         return $next($request);
     }
