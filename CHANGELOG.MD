@@ -2,9 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
-
-## [2.0.0] - 2026-08-17
+## [1.1.0] - 2026-08-17
 
 ### Changed — BREAKING
 
@@ -33,7 +31,6 @@ All notable changes to this project will be documented in this file.
 
 - `SsoClient::listMemberships()` and `SsoClient::switchOrganization()` — the caller's companies, and acting as one
   of them. See `sdk/CONTRACT.md`, "The active organization".
-
 
 ## [1.0.3] - 2026-08-11
 
