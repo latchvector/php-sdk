@@ -95,6 +95,8 @@ text_pattern_ops)`.
 
 **Machine tokens** stay tenant-wide (no user reach). For a backend acting on
 behalf of a forwarded user token, adopt its reach: `$context->fromPrincipal($verifier->verify($userToken))`.
+The `SsoClientAuthenticator` firewall, registering the client and obtaining the
+token: **[machine-to-machine.md](machine-to-machine.md)**.
 
 ⚠️ Not covered (add the `tenant_id` clause yourself): native SQL, bulk DQL
 `UPDATE`/`DELETE`. In long-running workers reset the context per message

@@ -17,6 +17,7 @@ composer require latchvector/sso
 ## Contents
 
 - [Protecting an API — the common case](#protecting-an-api--the-common-case)
+- [Machine-to-machine (API clients)](docs/machine-to-machine.md)
 - [Multitenancy (Laravel & Symfony)](#multitenancy-laravel--symfony)
 - [What `audience` is for](#what-audience-is-for)
 - [The principal](#the-principal)
@@ -220,6 +221,10 @@ To *call* another service, obtain a token with the `SsoClient` service:
 $machine = $sso->clientCredentials($clientId, $clientSecret, ['reports.write']);
 // cache $machine->accessToken (~15 min, no refresh), send as Bearer.
 ```
+
+**→ [Machine-to-machine guide](docs/machine-to-machine.md)** — registering the
+client, where the secret goes, the `applicationId`/audience trap, and how to
+test it end to end.
 
 ---
 
@@ -442,6 +447,13 @@ $principal->hasAny('invoice.approve', 'invoice.admin');
 $principal->hasAll('invoice.read', 'invoice.approve');
 $principal->canReach('/1/57/903/');   // does their granted scope cover this node?
 ```
+
+**Cache and key company data on `(uid, org_id)`, not on `uid` alone.** A token
+carries the authority of exactly one company, and a user who belongs to several
+can switch between them — so `org_id` changes while `uid` stays put. Anything
+cached under `uid` alone will serve one company's data while the caller is
+acting as another. This is the single most likely mistake in a multi-company
+integration.
 
 **Key your own tables on `uid`, never on the email.** Addresses change, and
 a GDPR erasure request scrubs the address while `uid` survives. Rows keyed

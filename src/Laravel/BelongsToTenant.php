@@ -153,10 +153,30 @@ trait BelongsToTenant
 
     /**
      * Narrow to a single org node by id — the "filter by the org id from a
-     * dropdown" case. Safe by construction: it ANDs onto the tenant scope, so an
-     * id outside the caller's reach simply yields no rows (the token carries no
-     * id→path map, so there is nothing to pre-validate). For an explicit 403 on an
-     * out-of-reach target, filter by path with {@see scopeForOrg} instead.
+     * dropdown" case. ANDs onto the always-on tenant scope, so it can only ever
+     * shrink the result, never widen it.
+     *
+     *   Post::forOrgId(5)->get();               // rows whose org_id is 5
+     *
+     * Deliberately asymmetric with {@see scopeForOrg}, and worth understanding:
+     *
+     *  - An id **outside the caller's reach yields an empty result, NOT a 403.**
+     *    A SELF caller asking for a child, a sibling org, another tenant's id —
+     *    all come back empty, because the row simply falls outside the tenant +
+     *    subtree wall the global scope already applies. No data leaks; the caller
+     *    just cannot tell "no rows here" apart from "not allowed to see this org".
+     *  - It cannot fail closed with a 403 the way the path method does, because
+     *    the token carries the caller's reach as PATHS, not an id→path map. Given
+     *    a bare id there is nothing local to validate against, and this method
+     *    never calls the SSO to find out — an id filter must stay a pure query.
+     *
+     * When you DO want a 403 on a tampered / out-of-reach id (e.g. the id came
+     * from the request, not from a list you already scoped), resolve it to a path
+     * in your OWN org table — no round-trip to the SSO — and use the path method,
+     * which fails closed:
+     *
+     *   $path = Org::findOrFail($orgId)->path;  // your local id→path lookup
+     *   Post::forOrg($path)->get();             // throws (→ 403) if out of reach
      */
     public function scopeForOrgId(Builder $query, int $orgId): Builder
     {

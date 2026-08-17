@@ -90,6 +90,10 @@ $user = app(TokenVerifier::class)->verify($forwardedUserToken);
 app(TenantContext::class)->fromPrincipal($user);   // now models scope to the user's subtree
 ```
 
+The full `sso.client` / `sso.scope` story — registering the client, where the
+secret goes, obtaining and caching the token —
+**[machine-to-machine.md](machine-to-machine.md)**.
+
 ## 5. Filter within your subtree by a chosen org
 
 To let a caller narrow to one org inside their reach (e.g. I'm `/2/`, show me

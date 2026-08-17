@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-17
+
+### Changed — BREAKING
+
+- **Tenant scoping is now confined to the caller's org subtree by default.**
+  Previously a scoped query was narrowed to the customer (`tenant_id`) and no
+  further, with org-subtree scoping available as an opt-in. That is unsafe once a
+  person belongs to more than one company of the same customer — which they now
+  can — because it shows them every company's rows.
+
+  **Migration.** PHP already defaulted to subtree scoping, so no change is
+  required here; this release aligns the version with the other SDKs and adds the
+  multi-company surface below.
+
+- **A token represents one person acting at ONE company.** `org_id`, `org_path`,
+  `permissions` and `scope_self`/`scope_subtree` are resolved for that company
+  alone rather than being a union across all of them. Claim shapes are unchanged,
+  so verification code keeps working — but two things now matter:
+  - **cache and key company data on `(uid, org_id)`, not `uid` alone.** After a
+    switch, a `uid`-keyed cache serves the previous company's data to the new
+    one. This is the most likely mistake in a multi-company integration, and the
+    READMEs previously advised keying on `uid` without this caveat;
+  - membership, not role assignment, is what grants access to a company: the
+    service will not mint a token for one the user does not belong to.
+
+### Added
+
+- `SsoClient::listMemberships()` and `SsoClient::switchOrganization()` — the caller's companies, and acting as one
+  of them. See `sdk/CONTRACT.md`, "The active organization".
+
+
 ## [1.0.3] - 2026-08-11
 
 ### Added
