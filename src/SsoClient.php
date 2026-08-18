@@ -213,15 +213,67 @@ final class SsoClient
      *
      * @return array<string, mixed>
      */
-    private function post(string $path, array $body): array
+
+    /**
+     * The companies this user may act in.
+     *
+     * A person can belong to several companies of one customer and hold
+     * different roles in each. Self-service: any valid access token may ask,
+     * because seeing your own memberships reveals nothing you do not already
+     * have.
+     *
+     * @return list<array{organizationId:int,organizationName:string,organizationPath:string,isDefault:bool}>
+     */
+    public function listMemberships(string $accessToken): array
+    {
+        /** @var list<array{organizationId:int,organizationName:string,organizationPath:string,isDefault:bool}> $rows */
+        $rows = $this->send('GET', '/api/users/me/memberships', null, $accessToken);
+
+        return $rows;
+    }
+
+    /**
+     * Act as another of the caller's companies.
+     *
+     * A token carries the authority of exactly ONE company, so this is how a
+     * user with several moves between them: the pair that comes back is scoped
+     * to the new company and carries a different permission set.
+     *
+     * Anything you cached under the old token must be keyed by
+     * `(uid, org_id)` — a cache keyed on `uid` alone will serve the previous
+     * company's data to the new one. That is the one mistake this feature
+     * invites, so it is worth checking before you ship.
+     */
+    public function switchOrganization(string $accessToken, int $organizationId): TokenPair
+    {
+        return TokenPair::fromArray($this->send('POST', '/api/users/me/active-organization', [
+            'organizationId' => $organizationId,
+            'audience' => $this->wireAudience,
+        ], $accessToken));
+    }
+
+    private function post(string $path, array $body, ?string $accessToken = null): array
+    {
+        return $this->send('POST', $path, $body, $accessToken);
+    }
+
+    /**
+     * @param array<string, mixed>|null $body
+     * @return array<mixed>
+     */
+    private function send(string $method, string $path, ?array $body, ?string $accessToken = null): array
     {
         $attempt = 0;
 
         while (true) {
-            $response = $this->http->request('POST', $this->issuer.$path, [
-                'json' => $body,
-                'http_errors' => false,
-            ]);
+            $options = ['http_errors' => false];
+            if ($body !== null) {
+                $options['json'] = $body;
+            }
+            if ($accessToken !== null) {
+                $options['headers'] = ['Authorization' => 'Bearer '.$accessToken];
+            }
+            $response = $this->http->request($method, $this->issuer.$path, $options);
             $status = $response->getStatusCode();
             $raw = (string) $response->getBody();
 

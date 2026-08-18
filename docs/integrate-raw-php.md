@@ -95,6 +95,9 @@ authenticates with a machine token but acts on behalf of an end user, verify the
 user's **forwarded** token and scope by the user (`$user->tenantId`,
 `$user->orgPath`, `$user->scopeSubtree`/`$user->scopeSelf`), not the machine.
 
+Registering the client, where the secret goes, obtaining the token and the
+`applicationId`/audience trap: **[machine-to-machine.md](machine-to-machine.md)**.
+
 ## 6. Test it, step by step
 
 Smoke script (`test.php`):

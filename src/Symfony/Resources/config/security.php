@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use LatchVector\Sso\Symfony\PermissionVoter;
 use LatchVector\Sso\Symfony\SsoAuthenticator;
 use LatchVector\Sso\Tenancy\TenantContext;
 use LatchVector\Sso\TokenVerifier;
@@ -20,4 +21,11 @@ return static function (ContainerConfigurator $configurator): void {
             service(TenantContext::class),
             '%latch_vector_sso.tenant.bypass_permission%',
         ]);
+
+    // Lets permission codes (and machine-token scopes) be used directly as
+    // #[IsGranted(...)] attributes. Without it, non-ROLE_ codes abstain in
+    // RoleVoter and the decision defaults to denied. See PermissionVoter.
+    $configurator->services()
+        ->set(PermissionVoter::class)
+        ->tag('security.voter');
 };

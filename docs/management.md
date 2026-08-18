@@ -60,7 +60,9 @@ $mgmt->addPermission($app['id'], ['code' => 'invoice.approve']);
 $mgmt->applicationQuota($orgId);                 // ['used' => .., 'limit' => .. | null]
 
 // Clients / webhooks (secret shown once)
-$mgmt->registerClient(['organizationId' => $orgId, 'name' => $name, 'scopes' => ['reports.read']]);
+// registerClient takes orgId (not organizationId) — see docs/machine-to-machine.md
+$mgmt->registerClient(['name' => $name, 'orgId' => $orgId, 'applicationId' => $app['id'],
+                       'scopes' => ['reports.read']]);
 $mgmt->registerWebhook(['organizationId' => $orgId, 'applicationId' => $app['id'], 'url' => $url]);
 
 // Audit, import, GDPR
