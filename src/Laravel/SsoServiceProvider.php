@@ -77,6 +77,33 @@ final class SsoServiceProvider extends ServiceProvider
         // Machine (client_credentials) tokens.
         $router->aliasMiddleware('sso.client', AuthenticateClientWithSso::class);
         $router->aliasMiddleware('sso.scope', RequireScope::class);
+
+        $this->registerAsLivewirePersistentMiddleware();
+    }
+
+    /**
+     * Livewire's component-action requests (POST .../livewire/update) never
+     * run the middleware that decorated the page's original route — Livewire
+     * only replays a hardcoded whitelist of "persistent" middleware (Sanctum,
+     * the built-in Auth middleware, ...) against a reconstructed request for
+     * that original route. Without this, sso.auth silently gets skipped on
+     * every Livewire action, so a component that resolves Principal from the
+     * request (or a container binding fed by this middleware) fails on the
+     * very first click, not on page load — the failure is unrelated to
+     * whatever the click was supposed to do, which makes it look like the
+     * SDK itself is broken. Registering our own middleware here means a
+     * consumer building on `sso.auth` gets this for free.
+     */
+    private function registerAsLivewirePersistentMiddleware(): void
+    {
+        if (!class_exists(\Livewire\Livewire::class)) {
+            return;
+        }
+
+        \Livewire\Livewire::addPersistentMiddleware([
+            AuthenticateWithSso::class,
+            AuthenticateClientWithSso::class,
+        ]);
     }
 
     /** @param array<string, mixed> $config */
