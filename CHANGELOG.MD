@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.1.1] - 2026-08-22
 
 ### Added
 
@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
   `POST /api/alerts/custom`, using a `clientCredentials(...)` token for an
   application with custom alerts enabled. See CONTRACT.md.
 
-## [2.0.0] - 2026-08-17
+## [1.1.0] - 2026-08-17
 
 ### Changed — BREAKING
 
