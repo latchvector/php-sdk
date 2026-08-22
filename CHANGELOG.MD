@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1] - 2026-08-22
+
+### Added
+
+- `SsoClient::raiseCustomAlert()` — raise a custom alert via
+  `POST /api/alerts/custom`, using a `clientCredentials(...)` token for an
+  application with custom alerts enabled. See CONTRACT.md.
+
 ## [1.1.0] - 2026-08-17
 
 ### Changed — BREAKING

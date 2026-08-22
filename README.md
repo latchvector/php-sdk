@@ -92,6 +92,34 @@ Publish the config if you want to change the defaults:
 php artisan vendor:publish --tag=latchvector-sso-config
 ```
 
+#### Livewire
+
+`sso.auth` and `sso.client` are registered as Livewire "persistent"
+middleware automatically, so a component's action requests
+(`POST .../livewire/update`) re-verify the token the same way the page's
+original route did — without this, Livewire only replays a hardcoded
+whitelist of middleware against a reconstructed request for the original
+route, so `sso.auth` would silently be skipped on every click.
+
+This only covers the SDK's own middleware. If your app authenticates the
+browser some other way — a session-stored token pair rather than a Bearer
+header, say — and has its own middleware that resolves the principal, you
+must register that middleware yourself:
+
+```php
+use Livewire\Livewire;
+
+Livewire::addPersistentMiddleware([
+    \App\Http\Middleware\AuthenticateWithSsoSession::class,
+]);
+```
+
+Do this from a `boot()` method in one of your own service providers. Skipping
+it produces a confusing symptom: the page loads fine, but the first Livewire
+action (create, update, delete, ...) throws a `BindingResolutionException`
+for `Principal` — not an auth error — because the principal was never
+re-attached to that request's container.
+
 #### Machine-to-machine (API clients)
 
 For endpoints called by a backend service, not a user — the OAuth2

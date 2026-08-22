@@ -252,6 +252,41 @@ final class SsoClient
         ], $accessToken));
     }
 
+    /**
+     * Raise a custom alert into the same feed as the platform's own
+     * security/business alerts — shown in the control panel, pushed to the
+     * mobile app.
+     *
+     * `$machineAccessToken` is a `clientCredentials(...)` token for a client
+     * whose application has custom alerts turned on (control panel:
+     * Applications -> Manage -> Custom alerts) — a token minted before that
+     * was turned on will not carry the required permission; get a fresh one.
+     *
+     * `$type` must match `^[a-z0-9_]{1,40}$` — the service stores it prefixed
+     * with `"custom."` so it can never collide with a hardcoded platform
+     * alert type. `$severity` is one of `INFO`, `WARNING`, `CRITICAL`
+     * (default `WARNING` when null). The service answers `202 Accepted` with
+     * no body, so there is nothing to return.
+     *
+     * @param array<string, mixed>|null $metadata
+     */
+    public function raiseCustomAlert(
+        string $machineAccessToken,
+        string $type,
+        string $title,
+        ?string $severity = null,
+        ?array $metadata = null,
+    ): void {
+        $body = array_filter([
+            'type' => $type,
+            'title' => $title,
+            'severity' => $severity,
+            'metadata' => $metadata,
+        ], static fn ($v) => $v !== null);
+
+        $this->send('POST', '/api/alerts/custom', $body, $machineAccessToken);
+    }
+
     private function post(string $path, array $body, ?string $accessToken = null): array
     {
         return $this->send('POST', $path, $body, $accessToken);
