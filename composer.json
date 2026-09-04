@@ -15,7 +15,7 @@
         "ext-json": "*",
         "ext-openssl": "*",
         "firebase/php-jwt": "^7.1",
-        "guzzlehttp/guzzle": "^7.8",
+        "guzzlehttp/guzzle": "^7.8 || ^8.0",
         "psr/simple-cache": "^1.0 || ^2.0 || ^3.0"
     },
     "require-dev": {

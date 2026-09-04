@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.2] - 2026-09-04
+
+### Changed
+
+- Relaxed the `guzzlehttp/guzzle` constraint to `^7.8 || ^8.0`. Installing
+  this SDK into an app already locked to Guzzle 8 previously failed with a
+  composer conflict (`... require guzzlehttp/guzzle ^7.8 -> found ... fixed
+  to 8.1.0`). Full test suite passes against both 7.15.x and 8.1.0.
+
 ## [1.1.1] - 2026-08-22
 
 ### Added
