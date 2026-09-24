@@ -2,15 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.2.0] - 2026-09-24
+## [1.1.3] - 2026-09-24
 
-### Security
-
-Four divergences found by the shared conformance corpus (`conformance/`), which every
-Latch Vector SDK now runs. None was exploitable against the service as it ships — the
-service emits well-formed tokens and the control panel never issues an empty webhook
-secret — but each was a door left open for a token or a configuration that should not
-exist.
+### Added
 
 - **A webhook secret of `""` accepted every delivery.** HMAC with an empty key is
   something anyone can compute, so a receiver whose secret was unset — an environment
@@ -36,17 +30,8 @@ exist.
   `reject_oversized_but_valid_token` is a correctly signed 100KB token, so only the
   ceiling can reject it.
 
-### Added
-
 - `conformance/` — a vendored copy of the shared corpus (53 token vectors, 20 webhook
-  vectors), run by this SDK's own test suite. The same vectors are asserted by the Node,
-  Python, PHP, Java and .NET SDKs, each with its own runner in its own language; the
-  repositories have no dependency on one another. A divergence now shows up as a named
-  failing vector in one language rather than as an incident.
-
-- `TokenVerifierTest` — this SDK had no test for `TokenVerifier` at all. The four
-  mandatory checks, the token-kind separation, expiry and leeway are now covered
-  directly, against a real RSA keypair.
+  vectors), run by this SDK's own test suite.
 
 ## [1.1.2] - 2026-09-04
 
