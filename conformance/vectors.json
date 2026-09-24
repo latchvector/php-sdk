@@ -1,0 +1,776 @@
+{
+  "$comment": [
+    "Shared conformance corpus for every Latch Vector SSO SDK.",
+    "Derived from ../CONTRACT.md. When this file and the service disagree, the service wins.",
+    "",
+    "Each SDK has one test that reads this file, builds every token locally from keys.json,",
+    "feeds it to its own verifier, and asserts the same outcome. Identical behaviour across",
+    "five languages stops being a belief and becomes something CI proves.",
+    "",
+    "FORMAT",
+    "  base        which claim template to start from: \"user\" or \"client\".",
+    "  claims      overrides merged over the template. A null value DELETES that claim.",
+    "  verify      which entry point to call: \"user\" (verify) or \"client\" (verifyClient).",
+    "  sign.key    \"primary\" (the key in jwks.json) or \"attacker\" (an unrelated key).",
+    "  sign.alg    signing algorithm. Default RS256.",
+    "  sign.header extra JOSE header members.",
+    "  mutate      post-signing tampering, see MUTATIONS below.",
+    "  expect      \"accept\" or \"reject\".",
+    "  reason      why. Reject reasons are grouped by the CONTRACT check they enforce.",
+    "  principal   expected fields when expect is accept.",
+    "  reach       canReach() assertions: path -> expected boolean.",
+    "",
+    "TIME",
+    "  A claim value that is a string matching ^[+-][0-9]+$ is an offset in seconds from",
+    "  the moment the test runs. \"+900\" = now + 15min. Keeps the corpus from expiring.",
+    "",
+    "MUTATIONS",
+    "  alg_none              re-encode the header with alg=none and drop the signature.",
+    "  alg_hs256_public_key  re-sign with HS256 using the PUBLIC key as the HMAC secret.",
+    "  tamper_payload        flip uid to 1 after signing, keep the original signature.",
+    "  strip_signature       header.payload. with an empty signature segment.",
+    "  truncate_signature    drop the last 8 characters of the signature.",
+    "  garbage               not a JWT at all.",
+    "  empty                 the empty string.",
+    "  whitespace            a string of spaces.",
+    "  huge                  a ~10MB token. Must be rejected without exhausting memory.",
+    "  padClaimBytes         NOT a mutation: pads the payload with a filler claim of this many",
+    "                        bytes BEFORE signing, producing a token that is genuinely",
+    "                        well-formed and validly signed, and merely enormous.",
+    "",
+    "VERIFIER CONFIGURATION under which these outcomes hold",
+    "  issuer  https://sso.example.com",
+    "  audience https://api.example.com",
+    "  clockToleranceSeconds 30"
+  ],
+  "config": {
+    "issuer": "https://sso.example.com",
+    "audience": "https://api.example.com",
+    "clockToleranceSeconds": 30
+  },
+  "templates": {
+    "user": {
+      "iss": "https://sso.example.com",
+      "aud": "https://api.example.com",
+      "sub": "person@customer.com",
+      "iat": "-5",
+      "exp": "+900",
+      "token_use": "access",
+      "uid": 4711,
+      "org_id": 57,
+      "org_name": "Northwind Ltd",
+      "tenant_id": 1,
+      "org_path": "/1/57/",
+      "permissions": [
+        "invoice.approve"
+      ],
+      "scope_self": [
+        "/1/57/"
+      ],
+      "scope_subtree": []
+    },
+    "client": {
+      "iss": "https://sso.example.com",
+      "aud": "https://api.example.com",
+      "sub": "client_93ccdfeede0044ba",
+      "iat": "-5",
+      "exp": "+900",
+      "token_use": "client",
+      "org_id": 57,
+      "tenant_id": 1,
+      "application_id": 42,
+      "scope": [
+        "reports.read"
+      ]
+    }
+  },
+  "vectors": [
+    {
+      "name": "user_valid",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "expect": "accept",
+      "reason": "The happy path. All four mandatory checks pass.",
+      "principal": {
+        "uid": 4711,
+        "email": "person@customer.com",
+        "orgId": 57,
+        "tenantId": 1,
+        "orgPath": "/1/57/",
+        "permissions": [
+          "invoice.approve"
+        ],
+        "scopeSelf": [
+          "/1/57/"
+        ],
+        "scopeSubtree": []
+      },
+      "reach": {
+        "/1/57/": true,
+        "/1/57/903/": false,
+        "/1/58/": false,
+        "/1/": false,
+        "": false
+      }
+    },
+    {
+      "name": "user_aud_array_contains_ours",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "aud": [
+          "https://other.example.com",
+          "https://api.example.com"
+        ]
+      },
+      "expect": "accept",
+      "reason": "aud is a list in the spec. Ours being the second entry is still a match.",
+      "principal": {
+        "uid": 4711,
+        "orgId": 57
+      }
+    },
+    {
+      "name": "user_aud_single_element_array",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "aud": [
+          "https://api.example.com"
+        ]
+      },
+      "expect": "accept",
+      "reason": "The service issues aud as a one-element array. This is the real wire shape."
+    },
+    {
+      "name": "user_unknown_claims_ignored",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "scopes": [
+          "invoice.approve"
+        ],
+        "realm_access": {
+          "roles": [
+            "admin"
+          ]
+        },
+        "memberships": [
+          {
+            "id": 57,
+            "name": "Northwind Ltd",
+            "path": "/1/57/"
+          }
+        ],
+        "custom_thing": "whatever"
+      },
+      "expect": "accept",
+      "reason": "CONTRACT 3: a customer may add their own claim names. An unknown claim is not a signal and must not be enforced or rejected.",
+      "principal": {
+        "uid": 4711,
+        "permissions": [
+          "invoice.approve"
+        ]
+      }
+    },
+    {
+      "name": "user_expired_inside_clock_tolerance",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "exp": "-29",
+        "iat": "-929"
+      },
+      "expect": "accept",
+      "reason": "29s past expiry with a 30s tolerance is still valid. Clock skew between our servers and theirs is real."
+    },
+    {
+      "name": "user_subtree_scope",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "org_path": "/1/57/",
+        "scope_self": [
+          "/1/57/"
+        ],
+        "scope_subtree": [
+          "/1/57/"
+        ]
+      },
+      "expect": "accept",
+      "reason": "A subtree grant reaches the node itself and everything beneath it.",
+      "reach": {
+        "/1/57/": true,
+        "/1/57/903/": true,
+        "/1/57/903/12/": true,
+        "/1/58/": false,
+        "/1/": false
+      }
+    },
+    {
+      "name": "user_subtree_must_not_leak_to_sibling_by_prefix",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "org_path": "/1/5/",
+        "scope_self": [
+          "/1/5/"
+        ],
+        "scope_subtree": [
+          "/1/5/"
+        ]
+      },
+      "expect": "accept",
+      "reason": "THE prefix trap. A naive startsWith on an unterminated path would let /1/5/ reach /1/57/ — a different company. The trailing slash is what makes the prefix test a segment test. Any SDK that normalises paths differently leaks across organizations here.",
+      "reach": {
+        "/1/5/": true,
+        "/1/5/9/": true,
+        "/1/5/90/": true,
+        "/1/57/": false,
+        "/1/50/": false,
+        "/1/59/": false,
+        "/1/5": false
+      }
+    },
+    {
+      "name": "user_subtree_grant_without_trailing_slash_must_not_widen",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "org_path": "/1/5/",
+        "scope_self": [
+          "/1/5/"
+        ],
+        "scope_subtree": [
+          "/1/5"
+        ]
+      },
+      "expect": "accept",
+      "reason": "Defence in depth on the prefix trap. The service always emits a trailing slash, so a grant of /1/5 should never appear — but if one ever did, a raw startsWith would hand /1/57/ to a caller granted /1/5/. The grant is normalised before comparison so that a malformed claim narrows the reach rather than widening it. An SDK that trusts the claim verbatim fails this vector, and the failure is a cross-organization read.",
+      "reach": {
+        "/1/5/": true,
+        "/1/5/9/": true,
+        "/1/57/": false,
+        "/1/50/": false
+      }
+    },
+    {
+      "name": "user_tenant_root_subtree",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "org_path": "/1/57/",
+        "scope_self": [
+          "/1/57/"
+        ],
+        "scope_subtree": [
+          "/1/"
+        ]
+      },
+      "expect": "accept",
+      "reason": "CONTRACT 3: /1/ grants /1/57/903/. Tenant-wide reach.",
+      "reach": {
+        "/1/": true,
+        "/1/57/": true,
+        "/1/57/903/": true,
+        "/2/": false,
+        "/2/57/": false
+      }
+    },
+    {
+      "name": "user_no_permissions",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "permissions": []
+      },
+      "expect": "accept",
+      "reason": "A user with no permissions at this application is authenticated but authorized for nothing. Not an error.",
+      "principal": {
+        "uid": 4711,
+        "permissions": []
+      }
+    },
+    {
+      "name": "user_permissions_wrong_type_fails_closed",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "permissions": "invoice.approve"
+      },
+      "expect": "accept",
+      "reason": "A malformed permissions claim must degrade to NO permissions, never to the string being treated as one. Fail closed, do not throw: the token itself is validly signed.",
+      "principal": {
+        "uid": 4711,
+        "permissions": []
+      }
+    },
+    {
+      "name": "user_scope_claims_absent",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "scope_self": null,
+        "scope_subtree": null
+      },
+      "expect": "accept",
+      "reason": "scope_subtree is present only when the reach extends below. Absent claims are empty lists, and reach nothing.",
+      "principal": {
+        "scopeSelf": [],
+        "scopeSubtree": []
+      },
+      "reach": {
+        "/1/57/": false,
+        "/1/": false
+      }
+    },
+    {
+      "name": "client_valid",
+      "base": "client",
+      "verify": "client",
+      "claims": {},
+      "expect": "accept",
+      "reason": "Machine token happy path.",
+      "principal": {
+        "clientId": "client_93ccdfeede0044ba",
+        "orgId": 57,
+        "tenantId": 1,
+        "applicationId": 42,
+        "scopes": [
+          "reports.read"
+        ]
+      }
+    },
+    {
+      "name": "client_unbound_has_no_application_id",
+      "base": "client",
+      "verify": "client",
+      "claims": {
+        "application_id": null
+      },
+      "expect": "accept",
+      "reason": "An unbound client carries no application_id. The field is absent, not zero.",
+      "principal": {
+        "clientId": "client_93ccdfeede0044ba",
+        "applicationId": null,
+        "scopes": [
+          "reports.read"
+        ]
+      }
+    },
+    {
+      "name": "client_empty_scope",
+      "base": "client",
+      "verify": "client",
+      "claims": {
+        "scope": []
+      },
+      "expect": "accept",
+      "reason": "A client with no scopes may do nothing. Authenticated, not authorized.",
+      "principal": {
+        "scopes": []
+      }
+    },
+    {
+      "name": "reject_forged_signature",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "sign": {
+        "key": "attacker"
+      },
+      "expect": "reject",
+      "reason": "CHECK 1 signature. Signed by a key that is not in the JWKS. Anyone can mint tokens without this."
+    },
+    {
+      "name": "reject_alg_none",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "mutate": "alg_none",
+      "expect": "reject",
+      "reason": "CHECK 1. alg:none must be rejected before the signature is examined."
+    },
+    {
+      "name": "reject_alg_confusion_hs256_with_public_key",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "mutate": "alg_hs256_public_key",
+      "expect": "reject",
+      "reason": "CHECK 1. The public key is published at the JWKS endpoint. If HMAC algorithms are not pinned out, an attacker signs with the public key as the shared secret and the verifier accepts it."
+    },
+    {
+      "name": "reject_tampered_payload",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "mutate": "tamper_payload",
+      "expect": "reject",
+      "reason": "CHECK 1. uid changed after signing. The signature no longer covers the payload."
+    },
+    {
+      "name": "reject_stripped_signature",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "mutate": "strip_signature",
+      "expect": "reject",
+      "reason": "CHECK 1. An empty signature segment is not a valid RS256 signature."
+    },
+    {
+      "name": "reject_truncated_signature",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "mutate": "truncate_signature",
+      "expect": "reject",
+      "reason": "CHECK 1. Malformed signature must fail verification, not crash the parser."
+    },
+    {
+      "name": "reject_unknown_kid",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "sign": {
+        "key": "attacker",
+        "header": {
+          "kid": "lv-test-primary"
+        }
+      },
+      "expect": "reject",
+      "reason": "CHECK 1. Claiming a trusted kid while signing with another key. The kid selects which published key to check against; it is not itself evidence."
+    },
+    {
+      "name": "reject_jku_header_points_at_attacker",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "sign": {
+        "key": "attacker",
+        "header": {
+          "jku": "https://attacker.example.net/jwks.json"
+        }
+      },
+      "expect": "reject",
+      "reason": "CHECK 1. Keys come from the issuer's discovery document, never from a URL the token itself supplies. An SDK that honours jku hands key selection to the attacker."
+    },
+    {
+      "name": "reject_x5u_header_points_at_attacker",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "sign": {
+        "key": "attacker",
+        "header": {
+          "x5u": "https://attacker.example.net/cert.pem"
+        }
+      },
+      "expect": "reject",
+      "reason": "CHECK 1. Same as jku for the X.509 variant."
+    },
+    {
+      "name": "reject_wrong_issuer",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "iss": "https://sso.otherdeployment.com"
+      },
+      "expect": "reject",
+      "reason": "CHECK 2 issuer. A validly signed token from another deployment must not be accepted here."
+    },
+    {
+      "name": "reject_missing_issuer",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "iss": null
+      },
+      "expect": "reject",
+      "reason": "CHECK 2. No issuer is not the same as the right issuer."
+    },
+    {
+      "name": "reject_wrong_audience",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "aud": "https://api.othercompany.com"
+      },
+      "expect": "reject",
+      "reason": "CHECK 3 audience. THE most consequential check. This token is validly signed by a trusted issuer and has the right iss, so checks 1 and 2 both pass. Without check 3, every user of every other application on the platform can authenticate as themselves against yours."
+    },
+    {
+      "name": "reject_missing_audience",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "aud": null
+      },
+      "expect": "reject",
+      "reason": "CHECK 3. An absent aud matches nothing."
+    },
+    {
+      "name": "reject_aud_array_without_ours",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "aud": [
+          "https://api.othercompany.com",
+          "https://api.third.com"
+        ]
+      },
+      "expect": "reject",
+      "reason": "CHECK 3. Membership in the list is the test, and we are not in it."
+    },
+    {
+      "name": "reject_aud_substring_not_match",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "aud": "https://api.example.com.attacker.net"
+      },
+      "expect": "reject",
+      "reason": "CHECK 3. Audience comparison is equality, never a prefix or substring test. A domain that merely starts with ours is a different application."
+    },
+    {
+      "name": "reject_mfa_pending_token",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "token_use": "mfa_pending",
+        "aud": null,
+        "uid": null,
+        "permissions": null
+      },
+      "expect": "reject",
+      "reason": "CHECK 4 token_use. The real shape of a pending token: same key, same issuer, no aud. It means the password was right and the second factor has NOT been proven."
+    },
+    {
+      "name": "reject_mfa_pending_even_with_correct_audience",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "token_use": "mfa_pending"
+      },
+      "expect": "reject",
+      "reason": "CHECK 4, the whole reason it exists. A pending token carrying a valid aud passes checks 1-3. Only the explicit token_use check stops a half-finished login from being accepted as a full one. This vector fails for any SDK that relies on the audience check as a side effect."
+    },
+    {
+      "name": "reject_client_token_at_user_verifier",
+      "base": "client",
+      "verify": "user",
+      "claims": {},
+      "expect": "reject",
+      "reason": "CHECK 4. A machine is not a person: no uid, no permissions. It must never arrive at the user verifier."
+    },
+    {
+      "name": "reject_user_token_at_client_verifier",
+      "base": "user",
+      "verify": "client",
+      "claims": {},
+      "expect": "reject",
+      "reason": "CHECK 4 mirrored. Authorization for a machine is by scope; a user token has permissions instead and must not be read as a client."
+    },
+    {
+      "name": "reject_missing_token_use",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "token_use": null
+      },
+      "expect": "reject",
+      "reason": "CHECK 4. Absent is not access. Fail closed."
+    },
+    {
+      "name": "reject_token_use_wrong_case",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "token_use": "ACCESS"
+      },
+      "expect": "reject",
+      "reason": "CHECK 4. The comparison is exact. A case-insensitive match is a wider door than the contract describes."
+    },
+    {
+      "name": "reject_token_use_unknown_value",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "token_use": "refresh"
+      },
+      "expect": "reject",
+      "reason": "CHECK 4. Only the three documented kinds exist, and only one of them is an access token."
+    },
+    {
+      "name": "reject_expired",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "iat": "-4500",
+        "exp": "-3600"
+      },
+      "expect": "reject",
+      "reason": "Lifetime. An hour past expiry."
+    },
+    {
+      "name": "reject_expired_just_outside_tolerance",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "iat": "-931",
+        "exp": "-31"
+      },
+      "expect": "reject",
+      "reason": "Lifetime, and a deliberate trap for .NET: TokenValidationParameters defaults ClockSkew to FIVE MINUTES. An SDK that does not set it explicitly accepts this token while the other four reject it — the same credential, two answers."
+    },
+    {
+      "name": "reject_not_yet_valid",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "nbf": "+300",
+        "iat": "+300",
+        "exp": "+1200"
+      },
+      "expect": "reject",
+      "reason": "Lifetime. nbf five minutes out is well past any sane skew allowance."
+    },
+    {
+      "name": "reject_missing_exp",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "exp": null
+      },
+      "expect": "reject",
+      "reason": "Lifetime. A token that never expires is not a token this service issues."
+    },
+    {
+      "name": "reject_uid_missing",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "uid": null
+      },
+      "expect": "reject",
+      "reason": "Claim shape. uid IS the identity. Without it there is no one to be."
+    },
+    {
+      "name": "reject_uid_as_string",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "uid": "4711"
+      },
+      "expect": "reject",
+      "reason": "Claim shape. A string uid means something upstream is not what we think it is. Refuse rather than coerce — silent coercion is how a 4711 becomes a 47."
+    },
+    {
+      "name": "reject_org_id_missing",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "org_id": null
+      },
+      "expect": "reject",
+      "reason": "Claim shape. org_id is the active company and every scoping decision downstream depends on it."
+    },
+    {
+      "name": "reject_org_id_as_string",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "org_id": "57"
+      },
+      "expect": "reject",
+      "reason": "Claim shape, and the highest-consequence one: a coerced org_id is a cross-organization data leak."
+    },
+    {
+      "name": "reject_tenant_id_missing",
+      "base": "user",
+      "verify": "user",
+      "claims": {
+        "tenant_id": null
+      },
+      "expect": "reject",
+      "reason": "Claim shape. tenant_id scopes the data layer."
+    },
+    {
+      "name": "reject_client_org_id_missing",
+      "base": "client",
+      "verify": "client",
+      "claims": {
+        "org_id": null
+      },
+      "expect": "reject",
+      "reason": "Claim shape. org_id is the attribution — which customer the machine acts for."
+    },
+    {
+      "name": "reject_client_wrong_audience",
+      "base": "client",
+      "verify": "client",
+      "claims": {
+        "aud": "https://api.othercompany.com"
+      },
+      "expect": "reject",
+      "reason": "CHECK 3 applies identically to machine tokens: a client bound to an application carries that application's identifier as aud."
+    },
+    {
+      "name": "reject_client_forged_signature",
+      "base": "client",
+      "verify": "client",
+      "claims": {},
+      "sign": {
+        "key": "attacker"
+      },
+      "expect": "reject",
+      "reason": "CHECK 1 on the machine path. The client verifier is not a relaxed verifier."
+    },
+    {
+      "name": "reject_garbage",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "mutate": "garbage",
+      "expect": "reject",
+      "reason": "Input handling. Not a JWT. Must fail as a verification error, not an unhandled parse exception."
+    },
+    {
+      "name": "reject_empty_string",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "mutate": "empty",
+      "expect": "reject",
+      "reason": "Input handling. The empty string is the shape a missing header has after naive trimming."
+    },
+    {
+      "name": "reject_whitespace",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "mutate": "whitespace",
+      "expect": "reject",
+      "reason": "Input handling."
+    },
+    {
+      "name": "reject_huge_token",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "mutate": "huge",
+      "expect": "reject",
+      "reason": "Input handling. ~10MB of base64. Must be refused promptly and without exhausting memory — an unauthenticated caller controls this size."
+    },
+    {
+      "name": "reject_oversized_but_valid_token",
+      "base": "user",
+      "verify": "user",
+      "claims": {},
+      "padClaimBytes": 100000,
+      "expect": "reject",
+      "reason": "Size ceiling, and the one that needs no forgery at all. Unlike reject_huge_token this is a REAL token: correctly signed by the trusted key, right issuer, right audience, right token_use. It is simply 100KB. An unauthenticated caller picks that number, so without a ceiling checked BEFORE decoding, every request costs CPU and memory proportional to whatever they send. A real token is under 8KB; CONTRACT.md section 2 sets the limit at 64KB."
+    }
+  ]
+}

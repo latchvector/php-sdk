@@ -63,7 +63,18 @@ final class Principal
         return true;
     }
 
-    /** Whether the user's granted scope reaches $orgPath. */
+    /**
+     * Whether the user's granted scope reaches $orgPath.
+     *
+     * A subtree grant covers the node itself and everything beneath it, which
+     * on a materialised path is exactly a prefix test.
+     *
+     * **The trailing slash is the entire safety property.** It is what turns a
+     * character prefix test into a path-segment test: without it, a grant on
+     * `/1/5` matches `/1/57/` — a different company, with a different
+     * customer's data in it. The service always emits the slash, so
+     * normalising the grant here can only ever narrow the reach, never widen it.
+     */
     public function canReach(string $orgPath): bool
     {
         if ($orgPath === '') {
@@ -72,10 +83,12 @@ final class Principal
         if (in_array($orgPath, $this->scopeSelf, true)) {
             return true;
         }
-        // A subtree grant covers the node itself and everything beneath it,
-        // which on a materialised path is exactly a prefix test.
         foreach ($this->scopeSubtree as $prefix) {
-            if (str_starts_with($orgPath, $prefix)) {
+            if ($prefix === '') {
+                continue;
+            }
+            $normalised = str_ends_with($prefix, '/') ? $prefix : $prefix.'/';
+            if (str_starts_with($orgPath, $normalised)) {
                 return true;
             }
         }

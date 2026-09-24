@@ -26,6 +26,20 @@ use Throwable;
  */
 final class TokenVerifier
 {
+    /**
+     * Refuse a token larger than this outright, before anything decodes it.
+     *
+     * A real token is well under 8KB even carrying a customer's own extra
+     * claims. The length of an inbound one is chosen by an *unauthenticated*
+     * caller, so without a ceiling every request costs CPU and memory
+     * proportional to whatever arrives — an amplification needing no
+     * credentials and no valid signature.
+     *
+     * Checked before JWT::decode, because after it the decoding has already
+     * happened and the ceiling has done nothing. See CONTRACT.md §2.
+     */
+    private const MAX_TOKEN_BYTES = 65536;
+
     private const DISCOVERY_PATH = '/.well-known/openid-configuration';
 
     private readonly string $issuer;
@@ -77,6 +91,9 @@ final class TokenVerifier
         if ($token === '') {
             throw new TokenVerificationException('No token supplied');
         }
+        if (strlen($token) > self::MAX_TOKEN_BYTES) {
+            throw new TokenVerificationException('Token exceeds the maximum accepted size');
+        }
 
         JWT::$leeway = $this->leewaySeconds;
 
@@ -94,6 +111,7 @@ final class TokenVerifier
 
         $this->assertIssuer($claims);
         $this->assertAudience($claims);
+        $this->assertExpiry($claims);
 
         // Defence in depth. An MFA pending token carries no `aud`, so the
         // audience check above already rejects it — but that is a side
@@ -132,6 +150,9 @@ final class TokenVerifier
         if ($token === '') {
             throw new TokenVerificationException('No token supplied');
         }
+        if (strlen($token) > self::MAX_TOKEN_BYTES) {
+            throw new TokenVerificationException('Token exceeds the maximum accepted size');
+        }
 
         JWT::$leeway = $this->leewaySeconds;
 
@@ -145,6 +166,7 @@ final class TokenVerifier
 
         $this->assertIssuer($claims);
         $this->assertAudience($claims);
+        $this->assertExpiry($claims);
 
         if (($claims['token_use'] ?? null) !== 'client') {
             throw new TokenVerificationException(sprintf(
@@ -164,6 +186,25 @@ final class TokenVerifier
         }
 
         return $this->verifyClient($m[1]);
+    }
+
+    /**
+     * Require an expiry.
+     *
+     * firebase/php-jwt validates `exp` when it is present but does not require
+     * it — a token without one is simply never expired. A signed bearer token
+     * that never expires is a permanent credential, and the service always sets
+     * an expiry, so this can only ever reject something that should not exist.
+     *
+     * @param array<string, mixed> $claims
+     */
+    private function assertExpiry(array $claims): void
+    {
+        if (!isset($claims['exp']) || !is_numeric($claims['exp'])) {
+            throw new TokenVerificationException(
+                'Token has no expiry. A signed token that never expires is a permanent credential.',
+            );
+        }
     }
 
     /** @param array<string, mixed> $claims */
