@@ -1,0 +1,172 @@
+{
+  "$comment": [
+    "Shared conformance corpus for inbound webhook verification.",
+    "",
+    "The service signs each delivery as HMAC-SHA256(\"<timestamp>.<rawBody>\", secret) and sends",
+    "it as X-LatchVector-Signature: sha256=<lowercase hex>, with the unix seconds in",
+    "X-LatchVector-Timestamp. Both authenticity AND freshness must be checked: a signature",
+    "alone lets a captured delivery be replayed forever.",
+    "",
+    "FORMAT",
+    "  body              the raw body bytes, as a string. Sign and verify these exact bytes.",
+    "  secret            the shared secret the receiver is configured with.",
+    "  timestampOffset   seconds from now for the X-LatchVector-Timestamp header.",
+    "  signature         how to build the X-LatchVector-Signature header:",
+    "                      \"valid\"            correctly computed over body+timestamp+secret",
+    "                      \"other_secret\"     correctly computed, wrong secret",
+    "                      \"other_body\"       computed over a different body",
+    "                      \"other_timestamp\"  computed over a different timestamp",
+    "                      {\"literal\": \"...\"}  sent verbatim",
+    "                      null               header absent",
+    "  omitTimestamp     send no X-LatchVector-Timestamp header.",
+    "  toleranceSeconds  verifier setting. Omitted means the SDK default of 300.",
+    "  expect            true (accept) or false (reject).",
+    "",
+    "Verification must never throw on malformed input — a webhook endpoint is reachable by",
+    "anyone who learns the URL. Every rejection here is a false return, not an exception."
+  ],
+
+  "vectors": [
+    {
+      "name": "valid",
+      "body": "{\"type\":\"user.created\",\"data\":{\"uid\":4711}}",
+      "secret": "whsec_2f8a1c9d4e6b", "timestampOffset": 0, "signature": "valid",
+      "expect": true,
+      "reason": "The happy path."
+    },
+    {
+      "name": "valid_empty_body",
+      "body": "", "secret": "whsec_2f8a1c9d4e6b", "timestampOffset": 0, "signature": "valid",
+      "expect": true,
+      "reason": "An empty body is still signed material. HMAC over the empty string is well defined."
+    },
+    {
+      "name": "valid_unicode_body",
+      "body": "{\"type\":\"org.renamed\",\"data\":{\"name\":\"Северна Македонија д.о.о. ✓\"}}",
+      "secret": "whsec_2f8a1c9d4e6b", "timestampOffset": 0, "signature": "valid",
+      "expect": true,
+      "reason": "The HMAC is over UTF-8 bytes. An SDK that decodes to a native string and re-encodes with a different codepage breaks here."
+    },
+    {
+      "name": "valid_at_tolerance_edge",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": -299, "signature": "valid",
+      "expect": true,
+      "reason": "Just inside the 300s window. Deliveries are retried; a strict-to-the-second window would reject legitimate retries."
+    },
+    {
+      "name": "valid_clock_ahead",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 120, "signature": "valid",
+      "expect": true,
+      "reason": "The sender's clock may be ahead of ours. Freshness is a window around now, not a deadline in the past."
+    },
+
+    {
+      "name": "reject_wrong_secret",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 0, "signature": "other_secret",
+      "expect": false,
+      "reason": "Authenticity. Someone who knows the URL but not the secret."
+    },
+    {
+      "name": "reject_body_tampered_in_flight",
+      "body": "{\"type\":\"user.erased\",\"data\":{\"uid\":1}}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 0, "signature": "other_body",
+      "expect": false,
+      "reason": "Authenticity. A valid signature for a DIFFERENT body, replayed against this one."
+    },
+    {
+      "name": "reject_timestamp_swapped",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 0, "signature": "other_timestamp",
+      "expect": false,
+      "reason": "The timestamp is inside the signed material precisely so it cannot be edited to refresh a captured delivery."
+    },
+    {
+      "name": "reject_replay_too_old",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": -301, "signature": "valid",
+      "expect": false,
+      "reason": "Freshness. The signature is perfectly valid — that is the point. Without the timestamp check a delivery captured once is usable forever."
+    },
+    {
+      "name": "reject_replay_far_future",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 86400, "signature": "valid",
+      "expect": false,
+      "reason": "Freshness in the other direction. A future timestamp is a pre-dated delivery parked for later."
+    },
+    {
+      "name": "reject_missing_signature_header",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 0, "signature": null,
+      "expect": false,
+      "reason": "No signature is not a pass."
+    },
+    {
+      "name": "reject_missing_timestamp_header",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 0, "signature": "valid", "omitTimestamp": true,
+      "expect": false,
+      "reason": "Without a timestamp the freshness check cannot run, so the delivery cannot be trusted even though the bytes verify."
+    },
+    {
+      "name": "reject_empty_signature_header",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 0, "signature": { "literal": "" },
+      "expect": false,
+      "reason": "Input handling."
+    },
+    {
+      "name": "reject_signature_without_prefix",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 0, "signature": { "literal": "deadbeef" },
+      "expect": false,
+      "reason": "The sha256= prefix is part of the header format. Comparing only the hex half of a header that may not have halves is how a length-confusion bug starts."
+    },
+    {
+      "name": "reject_signature_garbage",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 0, "signature": { "literal": "sha256=not-hex-at-all-zzzz" },
+      "expect": false,
+      "reason": "Input handling. Non-hex must return false, never throw a decode exception."
+    },
+    {
+      "name": "reject_signature_truncated",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 0, "signature": { "literal": "sha256=a1b2c3" },
+      "expect": false,
+      "reason": "A short signature must fail on content, and the comparison must not read past either buffer."
+    },
+    {
+      "name": "reject_timestamp_not_a_number",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 0, "signature": "valid",
+      "literalTimestamp": "yesterday",
+      "expect": false,
+      "reason": "Input handling. An unparseable timestamp fails the freshness check rather than being treated as zero — treated as zero it would be 1970 and stale, which happens to be right, but only by accident."
+    },
+    {
+      "name": "reject_timestamp_empty",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": 0, "signature": "valid",
+      "literalTimestamp": "",
+      "expect": false,
+      "reason": "Input handling. An empty string parses to 0 in several languages. It must not."
+    },
+    {
+      "name": "reject_empty_secret",
+      "body": "{\"type\":\"ping\"}", "secret": "", "timestampOffset": 0, "signature": "valid",
+      "expect": false,
+      "reason": "A misconfigured receiver with no secret must reject everything, not accept anything an attacker can compute with an empty key."
+    },
+    {
+      "name": "accept_old_delivery_when_tolerance_disabled",
+      "body": "{\"type\":\"ping\"}", "secret": "whsec_2f8a1c9d4e6b",
+      "timestampOffset": -100000, "signature": "valid", "toleranceSeconds": 0,
+      "expect": true,
+      "reason": "Tolerance 0 disables the freshness check for callers who do their own replay tracking by event id. Documented, explicit, and never the default."
+    }
+  ]
+}

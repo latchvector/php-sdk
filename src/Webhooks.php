@@ -43,6 +43,15 @@ final class Webhooks
             return false;
         }
 
+        // A receiver whose secret is unset arrives here with the empty string,
+        // and HMAC with an empty key is something anyone can compute. Without
+        // this the endpoint silently accepts every delivery an attacker cares
+        // to send — a configuration mistake that looks exactly like a working
+        // integration.
+        if ($secret === '') {
+            return false;
+        }
+
         if ($toleranceSeconds > 0) {
             if (! ctype_digit(ltrim($timestampHeader, '-'))) {
                 return false;

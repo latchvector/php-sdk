@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-09-24
+
+### Security
+
+Four divergences found by the shared conformance corpus (`conformance/`), which every
+Latch Vector SDK now runs. None was exploitable against the service as it ships — the
+service emits well-formed tokens and the control panel never issues an empty webhook
+secret — but each was a door left open for a token or a configuration that should not
+exist.
+
+- **A webhook secret of `""` accepted every delivery.** HMAC with an empty key is
+  something anyone can compute, so a receiver whose secret was unset — an environment
+  variable missing, a config key misspelled — verified whatever arrived. It looked
+  exactly like a working integration. Verification now refuses an empty secret outright.
+
+- **A subtree grant was compared as a character prefix, not a path segment.** A grant of
+  `/1/5` (no trailing slash) matched `/1/57/` — a different company, with a different
+  customer's data in it. The service always emits the trailing slash, so this needed a
+  malformed claim to trigger; grants are now normalised before comparison, so a malformed
+  one narrows the reach instead of widening it.
+
+- **A token with no `exp` was accepted.** The underlying JWT library validates an expiry
+  when present but treats an absent one as "never expires", and a signed bearer token
+  that never expires is a permanent credential. An expiry is now required.
+
+- **An oversized token was decoded before being refused.** A real token is well under
+  8KB, but the length of an inbound one is chosen by an *unauthenticated* caller — so
+  without a ceiling, every request costs CPU and memory proportional to whatever arrives.
+  That is an amplification needing no credentials and no valid signature. Tokens over
+  **64KB** are now refused on length alone, before anything base64-decodes or parses
+  them. CONTRACT.md §2 states the limit; corpus vector
+  `reject_oversized_but_valid_token` is a correctly signed 100KB token, so only the
+  ceiling can reject it.
+
+### Added
+
+- `conformance/` — a vendored copy of the shared corpus (53 token vectors, 20 webhook
+  vectors), run by this SDK's own test suite. The same vectors are asserted by the Node,
+  Python, PHP, Java and .NET SDKs, each with its own runner in its own language; the
+  repositories have no dependency on one another. A divergence now shows up as a named
+  failing vector in one language rather than as an incident.
+
+- `TokenVerifierTest` — this SDK had no test for `TokenVerifier` at all. The four
+  mandatory checks, the token-kind separation, expiry and leeway are now covered
+  directly, against a real RSA keypair.
+
 ## [1.1.2] - 2026-09-04
 
 ### Changed
